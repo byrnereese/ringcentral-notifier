@@ -28,28 +28,28 @@ export default function NotifierForm({ userId }: { userId: string }) {
 
   useEffect(() => {
     if (isEditing) {
-      fetchConnector();
+      fetchNotifier();
     }
   }, [id]);
 
-  const fetchConnector = async () => {
+  const fetchNotifier = async () => {
     try {
       const res = await fetch('/api/notifiers', {
         headers: { 'x-user-id': userId }
       });
       const data = await res.json();
-      const connector = data.find((c: any) => c.id === id);
-      if (connector) {
+      const notifier = data.find((c: any) => c.id === id);
+      if (notifier) {
         setFormData({
-          name: connector.name,
-          glip_webhook_url: connector.glip_webhook_url,
-          sample_payload: connector.sample_payload || '',
-          adaptive_card_template: connector.adaptive_card_template || '',
-          team_name: connector.team_name || ''
+          name: notifier.name,
+          glip_webhook_url: notifier.glip_webhook_url,
+          sample_payload: notifier.sample_payload || '',
+          adaptive_card_template: notifier.adaptive_card_template || '',
+          team_name: notifier.team_name || ''
         });
       }
     } catch (error) {
-      console.error('Failed to fetch connector', error);
+      console.error('Failed to fetch notifier', error);
     }
   };
 
@@ -205,7 +205,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
     setLoading(true);
 
     try {
-      const url = isEditing ? `/api/notifiers/${id}` : '/api/connectors';
+      const url = isEditing ? `/api/notifiers/${id}` : '/api/notifiers';
       const method = isEditing ? 'PUT' : 'POST';
 
       const res = await fetch(url, {
@@ -221,11 +221,11 @@ export default function NotifierForm({ userId }: { userId: string }) {
         navigate('/dashboard');
       } else {
         const data = await res.json();
-        alert(data.error || 'Failed to save connector');
+        alert(data.error || 'Failed to save notifier');
       }
     } catch (error) {
       console.error('Save failed', error);
-      alert('Failed to save connector');
+      alert('Failed to save notifier');
     } finally {
       setLoading(false);
     }

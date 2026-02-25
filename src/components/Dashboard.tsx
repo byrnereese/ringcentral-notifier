@@ -12,10 +12,10 @@ interface Notifier {
 }
 
 export default function Dashboard({ userId }: { userId: string }) {
-  const [notifiers, setNotifiers] = useState<Connector[]>([]);
+  const [notifiers, setNotifiers] = useState<Notifier[]>([]);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [testConnector, setTestConnector] = useState<Connector | null>(null);
+  const [testNotifier, setTestNotifier] = useState<Notifier | null>(null);
   const [testPayload, setTestPayload] = useState('');
   const [testTemplate, setTestTemplate] = useState('');
   const [testResult, setTestResult] = useState<{ status: 'success' | 'error', message: string, response?: string } | null>(null);
@@ -23,34 +23,34 @@ export default function Dashboard({ userId }: { userId: string }) {
   const [testing, setTesting] = useState(false);
 
   useEffect(() => {
-    fetchConnectors();
+    fetchNotifiers();
   }, [userId]);
 
-  const fetchConnectors = async () => {
+  const fetchNotifiers = async () => {
     try {
       const res = await fetch('/api/notifiers', {
         headers: { 'x-user-id': userId }
       });
       const data = await res.json();
-      setConnectors(data);
+      setNotifiers(data);
     } catch (error) {
-      console.error('Failed to fetch connectors', error);
+      console.error('Failed to fetch notifiers', error);
     } finally {
       setLoading(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this connector?')) return;
+    if (!confirm('Are you sure you want to delete this notifier?')) return;
     
     try {
-      await fetch(`/api/connectors/${id}`, {
+      await fetch(`/api/notifiers/${id}`, {
         method: 'DELETE',
         headers: { 'x-user-id': userId }
       });
-      setConnectors(connectors.filter(c => c.id !== id));
+      setNotifiers(notifiers.filter(c => c.id !== id));
     } catch (error) {
-      console.error('Failed to delete connector', error);
+      console.error('Failed to delete notifier', error);
     }
   };
 
@@ -61,23 +61,23 @@ export default function Dashboard({ userId }: { userId: string }) {
   };
 
   const handleTest = async () => {
-    if (!testConnector || !testPayload) return;
+    if (!testNotifier || !testPayload) return;
     setTesting(true);
     setTestResult(null);
     try {
-      // If template changed, update connector first
-      if (testTemplate !== (testConnector as any).adaptive_card_template) {
-        await fetch(`/api/connectors/${testConnector.id}`, {
+      // If template changed, update notifier first
+      if (testTemplate !== (testNotifier as any).adaptive_card_template) {
+        await fetch(`/api/notifiers/${testNotifier.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-          body: JSON.stringify({ ...testConnector, adaptive_card_template: testTemplate })
+          body: JSON.stringify({ ...testNotifier, adaptive_card_template: testTemplate })
         });
-        // Update local connector state
-        setConnectors(connectors.map(c => c.id === testConnector.id ? { ...c, adaptive_card_template: testTemplate } : c));
-        setTestConnector({ ...testConnector, adaptive_card_template: testTemplate } as any);
+        // Update local notifier state
+        setNotifiers(notifiers.map(c => c.id === testNotifier.id ? { ...c, adaptive_card_template: testTemplate } : c));
+        setTestNotifier({ ...testNotifier, adaptive_card_template: testTemplate } as any);
       }
 
-      const res = await fetch(`${testConnector.notification_url}?test=true`, {
+      const res = await fetch(`${testNotifier.notification_url}?test=true`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -126,54 +126,54 @@ export default function Dashboard({ userId }: { userId: string }) {
     }
   };
 
-  const openTestModal = (connector: Connector) => {
-    setTestConnector(connector);
-    setTestPayload(connector.sample_payload || '{\n  "event": "test"\n}');
-    setTestTemplate((connector as any).adaptive_card_template || '');
+  const openTestModal = (notifier: Notifier) => {
+    setTestNotifier(notifier);
+    setTestPayload(notifier.sample_payload || '{\n  "event": "test"\n}');
+    setTestTemplate((notifier as any).adaptive_card_template || '');
     setTestResult(null);
     setActiveTab('payload');
   };
 
-  if (loading) return <div className="p-8 text-center text-slate-500">Loading connectors...</div>;
+  if (loading) return <div className="p-8 text-center text-slate-500">Loading notifiers...</div>;
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-slate-900">Your Connectors</h2>
+        <h2 className="text-2xl font-bold text-slate-900">Your Notifiers</h2>
         <Link 
-          to="/connectors/new" 
+          to="/notifiers/new" 
           className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors flex items-center gap-2"
         >
           <Plus className="w-4 h-4" />
-          New Connector
+          New Notifier
         </Link>
       </div>
 
-      {connectors.length === 0 ? (
+      {notifiers.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
           <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <Settings className="w-8 h-8 text-slate-400" />
           </div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">No connectors yet</h3>
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">No notifiers yet</h3>
           <p className="text-slate-500 mb-6 max-w-sm mx-auto">
-            Create your first connector to start translating webhooks into RingCentral Adaptive Cards.
+            Create your first notifier to start translating webhooks into RingCentral Adaptive Cards.
           </p>
           <Link 
-            to="/connectors/new" 
+            to="/notifiers/new" 
             className="inline-flex items-center gap-2 bg-indigo-50 text-indigo-700 px-6 py-3 rounded-lg font-medium hover:bg-indigo-100 transition-colors"
           >
             <Plus className="w-5 h-5" />
-            Create Connector
+            Create Notifier
           </Link>
         </div>
       ) : (
         <div className="grid gap-4">
-          {connectors.map(connector => (
-            <div key={connector.id} className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm hover:shadow-md transition-shadow">
+          {notifiers.map(notifier => (
+            <div key={notifier.id} className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm hover:shadow-md transition-shadow">
               <div>
-                <h3 className="text-lg font-semibold text-slate-900">{connector.name}</h3>
+                <h3 className="text-lg font-semibold text-slate-900">{notifier.name}</h3>
                 <p className="text-sm text-slate-500 mt-1">
-                  Created {formatDistanceToNow(new Date(connector.created_at))} ago
+                  Created {formatDistanceToNow(new Date(notifier.created_at))} ago
                 </p>
               </div>
               
@@ -181,42 +181,42 @@ export default function Dashboard({ userId }: { userId: string }) {
                 <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1 block">Webhook URL</label>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-sm text-slate-600 truncate">
-                    {connector.notification_url}
+                    {notifier.notification_url}
                   </code>
                   <button 
-                    onClick={() => copyUrl(connector.notification_url, connector.id)}
+                    onClick={() => copyUrl(notifier.notification_url, notifier.id)}
                     className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
                     title="Copy URL"
                   >
-                    {copiedId === connector.id ? <Check className="w-5 h-5 text-emerald-500" /> : <Copy className="w-5 h-5" />}
+                    {copiedId === notifier.id ? <Check className="w-5 h-5 text-emerald-500" /> : <Copy className="w-5 h-5" />}
                   </button>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 pt-4 md:pt-0 border-t md:border-t-0 border-slate-100">
                 <button 
-                  onClick={() => openTestModal(connector)}
+                  onClick={() => openTestModal(notifier)}
                   className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
                 >
                   <Play className="w-4 h-4" />
                   Test
                 </button>
                 <Link 
-                  to={`/connectors/${connector.id}/history`}
+                  to={`/notifiers/${notifier.id}/history`}
                   className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
                 >
                   <Activity className="w-4 h-4" />
                   History
                 </Link>
                 <Link 
-                  to={`/connectors/${connector.id}/edit`}
+                  to={`/notifiers/${notifier.id}/edit`}
                   className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
                 >
                   <Settings className="w-4 h-4" />
                   Edit
                 </Link>
                 <button 
-                  onClick={() => handleDelete(connector.id)}
+                  onClick={() => handleDelete(notifier.id)}
                   className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                   title="Delete"
                 >
@@ -228,16 +228,16 @@ export default function Dashboard({ userId }: { userId: string }) {
         </div>
       )}
 
-      {testConnector && (
+      {testNotifier && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="flex justify-between items-center p-4 border-b border-slate-100">
               <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
                 <Play className="w-5 h-5 text-indigo-600" />
-                Test Connector: {testConnector.name}
+                Test Notifier: {testNotifier.name}
               </h3>
               <button 
-                onClick={() => setTestConnector(null)}
+                onClick={() => setTestNotifier(null)}
                 className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
               >
                 <X className="w-5 h-5" />
@@ -314,7 +314,7 @@ export default function Dashboard({ userId }: { userId: string }) {
             </div>
             <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
               <button
-                onClick={() => setTestConnector(null)}
+                onClick={() => setTestNotifier(null)}
                 className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-200 rounded-lg transition-colors"
               >
                 Close

@@ -103,7 +103,7 @@ app.get('/api/auth/callback', async (req, res) => {
   }
 });
 
-// Connectors API
+// Notifiers API
 async function rcFetch(url: string, options: any, userId: string) {
   let user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!user) throw new Error('User not found');
@@ -274,20 +274,20 @@ app.post('/api/ringcentral/webhooks', async (req, res) => {
   }
 });
 
-app.get('/api/connectors', (req, res) => {
+app.get('/api/notifiers', (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const connectors = db.prepare('SELECT * FROM connectors WHERE user_id = ? ORDER BY created_at DESC').all(userId);
-    res.json(connectors);
+    const notifiers = db.prepare('SELECT * FROM notifiers WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+    res.json(notifiers);
   } catch (error: any) {
-    console.error('Failed to fetch connectors:', error);
-    res.status(500).json({ error: error.message || 'Failed to fetch connectors' });
+    console.error('Failed to fetch notifiers:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch notifiers' });
   }
 });
 
-app.post('/api/connectors', (req, res) => {
+app.post('/api/notifiers', (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -297,21 +297,21 @@ app.post('/api/connectors', (req, res) => {
 
   try {
     const stmt = db.prepare(`
-      INSERT INTO connectors (id, user_id, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name)
+      INSERT INTO notifiers (id, user_id, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(id, userId, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name || null);
     
-    const connector = db.prepare('SELECT * FROM connectors WHERE id = ?').get(id);
-    res.json(connector);
+    const notifier = db.prepare('SELECT * FROM notifiers WHERE id = ?').get(id);
+    res.json(notifier);
   } catch (error: any) {
-    console.error('Failed to create connector:', error);
-    res.status(500).json({ error: error.message || 'Failed to create connector' });
+    console.error('Failed to create notifier:', error);
+    res.status(500).json({ error: error.message || 'Failed to create notifier' });
   }
 });
 
-app.put('/api/connectors/:id', (req, res) => {
+app.put('/api/notifiers/:id', (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -320,34 +320,34 @@ app.put('/api/connectors/:id', (req, res) => {
 
   try {
     const stmt = db.prepare(`
-      UPDATE connectors 
+      UPDATE notifiers 
       SET name = ?, glip_webhook_url = ?, sample_payload = ?, adaptive_card_template = ?, team_name = ?
       WHERE id = ? AND user_id = ?
     `);
 
     stmt.run(name, glip_webhook_url, sample_payload, adaptive_card_template, team_name || null, id, userId);
     
-    const connector = db.prepare('SELECT * FROM connectors WHERE id = ?').get(id);
-    res.json(connector);
+    const notifier = db.prepare('SELECT * FROM notifiers WHERE id = ?').get(id);
+    res.json(notifier);
   } catch (error: any) {
-    console.error('Failed to update connector:', error);
-    res.status(500).json({ error: error.message || 'Failed to update connector' });
+    console.error('Failed to update notifier:', error);
+    res.status(500).json({ error: error.message || 'Failed to update notifier' });
   }
 });
 
-app.delete('/api/connectors/:id', (req, res) => {
+app.delete('/api/notifiers/:id', (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
   const { id } = req.params;
   try {
-    db.prepare('DELETE FROM logs WHERE connector_id = ?').run(id);
-    db.prepare('DELETE FROM connectors WHERE id = ? AND user_id = ?').run(id, userId);
+    db.prepare('DELETE FROM logs WHERE notifier_id = ?').run(id);
+    db.prepare('DELETE FROM notifiers WHERE id = ? AND user_id = ?').run(id, userId);
     
     res.json({ success: true });
   } catch (error: any) {
-    console.error('Failed to delete connector:', error);
-    res.status(500).json({ error: error.message || 'Failed to delete connector' });
+    console.error('Failed to delete notifier:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete notifier' });
   }
 });
 
@@ -358,10 +358,10 @@ app.get('/api/logs', (req, res) => {
 
   try {
     const logs = db.prepare(`
-      SELECT logs.*, connectors.name as connector_name 
+      SELECT logs.*, notifiers.name as notifier_name 
       FROM logs 
-      JOIN connectors ON logs.connector_id = connectors.id 
-      WHERE connectors.user_id = ? 
+      JOIN notifiers ON logs.notifier_id = notifiers.id 
+      WHERE notifiers.user_id = ? 
       ORDER BY logs.created_at DESC 
       LIMIT 100
     `).all(userId);
@@ -373,7 +373,7 @@ app.get('/api/logs', (req, res) => {
   }
 });
 
-app.get('/api/connectors/:id/logs', (req, res) => {
+app.get('/api/notifiers/:id/logs', (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -381,14 +381,14 @@ app.get('/api/connectors/:id/logs', (req, res) => {
   
   try {
     // Verify ownership
-    const connector = db.prepare('SELECT id FROM connectors WHERE id = ? AND user_id = ?').get(id, userId);
-    if (!connector) return res.status(404).json({ error: 'Connector not found' });
+    const notifier = db.prepare('SELECT id FROM notifiers WHERE id = ? AND user_id = ?').get(id, userId);
+    if (!notifier) return res.status(404).json({ error: 'Notifier not found' });
 
-    const logs = db.prepare('SELECT * FROM logs WHERE connector_id = ? ORDER BY created_at DESC LIMIT 50').all(id);
+    const logs = db.prepare('SELECT * FROM logs WHERE notifier_id = ? ORDER BY created_at DESC LIMIT 50').all(id);
     res.json(logs);
   } catch (error: any) {
-    console.error('Failed to fetch connector logs:', error);
-    res.status(500).json({ error: error.message || 'Failed to fetch connector logs' });
+    console.error('Failed to fetch notifier logs:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch notifier logs' });
   }
 });
 
@@ -434,15 +434,15 @@ Make it look professional, with a title, some facts, and maybe a description.
 });
 
 // Webhook Processor
-app.post('/api/webhook/:connectorId', async (req, res) => {
-  const { connectorId } = req.params;
+app.post('/api/webhook/:notifierId', async (req, res) => {
+  const { notifierId } = req.params;
   const inboundPayload = req.body;
   const isTest = req.query.test === 'true' ? 1 : 0;
   
-  const connector: any = db.prepare('SELECT * FROM connectors WHERE id = ?').get(connectorId);
+  const notifier: any = db.prepare('SELECT * FROM notifiers WHERE id = ?').get(notifierId);
   
-  if (!connector) {
-    return res.status(404).json({ error: 'Connector not found' });
+  if (!notifier) {
+    return res.status(404).json({ error: 'Notifier not found' });
   }
 
   let generatedCard = '';
@@ -451,7 +451,7 @@ app.post('/api/webhook/:connectorId', async (req, res) => {
 
   try {
     // Simple template injection replacing {{key.subkey}} with values from inboundPayload
-    let templateStr = connector.adaptive_card_template;
+    let templateStr = notifier.adaptive_card_template;
     
     // Replace tokens
     templateStr = templateStr.replace(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (match: string, path: string) => {
@@ -485,14 +485,14 @@ app.post('/api/webhook/:connectorId', async (req, res) => {
     };
 
     const outboundRequestData = {
-      url: connector.glip_webhook_url,
+      url: notifier.glip_webhook_url,
       method: 'POST',
       headers: requestHeaders,
       body: outboundPayload
     };
 
     // Post to RingCentral Glip Webhook
-    const rcResponse = await fetch(connector.glip_webhook_url, {
+    const rcResponse = await fetch(notifier.glip_webhook_url, {
       method: 'POST',
       headers: requestHeaders,
       body: JSON.stringify(outboundPayload)
@@ -548,7 +548,7 @@ app.post('/api/webhook/:connectorId', async (req, res) => {
       } catch (e) {}
       
       outboundRequestStr = JSON.stringify({
-        url: connector.glip_webhook_url,
+        url: notifier.glip_webhook_url,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -559,11 +559,11 @@ app.post('/api/webhook/:connectorId', async (req, res) => {
     } catch(e) {}
 
     db.prepare(`
-      INSERT INTO logs (id, connector_id, status, inbound_request, generated_card, outbound_request, outbound_response, is_test)
+      INSERT INTO logs (id, notifier_id, status, inbound_request, generated_card, outbound_request, outbound_response, is_test)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       logId, 
-      connectorId, 
+      notifierId, 
       status, 
       JSON.stringify({ headers: req.headers, body: inboundPayload }), 
       generatedCard, 

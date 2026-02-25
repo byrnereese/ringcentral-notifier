@@ -1,5 +1,5 @@
 {
-  "name": "RingCentral Webhook Translator",
+  "name": "RingCentral Webhook Notifier",
   "description": "Bridge any app to RingCentral Team Messaging with custom Adaptive Cards.",
   "requestFramePermissions": []
 }

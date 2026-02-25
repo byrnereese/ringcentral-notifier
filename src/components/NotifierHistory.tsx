@@ -65,7 +65,7 @@ export default function NotifierHistory({ userId }: { userId: string }) {
         </Link>
         <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <Activity className="w-6 h-6 text-indigo-600" />
-          Connector History
+          Notifier History
         </h2>
       </div>
 
@@ -76,7 +76,7 @@ export default function NotifierHistory({ userId }: { userId: string }) {
           </div>
           <h3 className="text-lg font-semibold text-slate-900 mb-2">No activity yet</h3>
           <p className="text-slate-500 max-w-sm mx-auto">
-            Send a POST request to your connector's webhook URL to see activity here.
+            Send a POST request to your notifier's webhook URL to see activity here.
           </p>
         </div>
       ) : (
