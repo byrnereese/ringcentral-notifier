@@ -1,0 +1,5 @@
+{
+  "name": "RingCentral Webhook Translator",
+  "description": "Bridge any app to RingCentral Team Messaging with custom Adaptive Cards.",
+  "requestFramePermissions": []
+}
