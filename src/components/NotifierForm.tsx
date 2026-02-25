@@ -139,6 +139,13 @@ export default function NotifierForm({ userId }: { userId: string }) {
       const res = await fetch('/api/ringcentral/teams', {
         headers: { 'x-user-id': userId }
       });
+      
+      if (res.status === 401) {
+        localStorage.removeItem('userId');
+        window.location.reload();
+        return;
+      }
+
       let shouldSync = forceSync || !res.ok;
       if (res.ok) {
         const data = await res.json();
@@ -192,8 +199,20 @@ export default function NotifierForm({ userId }: { userId: string }) {
       eventSource.close();
     });
 
-    eventSource.addEventListener('error', (e) => {
+    eventSource.addEventListener('error', (e: any) => {
       console.error('SSE Error', e);
+      if (e.data) {
+        try {
+          const err = JSON.parse(e.data);
+          if (err.code === 'USER_NOT_FOUND' || err.message === 'User not found') {
+            localStorage.removeItem('userId');
+            window.location.reload();
+            return;
+          }
+        } catch (err) {
+          // ignore
+        }
+      }
       setSyncingTeams(false);
       eventSource.close();
     });
@@ -210,6 +229,12 @@ export default function NotifierForm({ userId }: { userId: string }) {
         },
         body: JSON.stringify({ groupId: team.id, isPersonal: team.isPersonal })
       });
+      
+      if (res.status === 401) {
+        localStorage.removeItem('userId');
+        window.location.reload();
+        return;
+      }
       
       if (res.ok) {
         const data = await res.json();

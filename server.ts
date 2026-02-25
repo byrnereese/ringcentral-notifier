@@ -135,9 +135,16 @@ app.get('/api/config', (req, res) => {
 });
 
 // Notifiers API
+class UserNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UserNotFoundError';
+  }
+}
+
 async function rcFetch(url: string, options: any, userId: string) {
   let user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  if (!user) throw new Error('User not found');
+  if (!user) throw new UserNotFoundError('User not found');
 
   let res = await fetch(`${RC_SERVER_URL}${url}`, {
     ...options,
@@ -272,7 +279,11 @@ app.get('/api/ringcentral/teams/sync', async (req, res) => {
     sendEvent('done', { success: true });
   } catch (error: any) {
     console.error('Failed to sync teams:', error);
-    sendEvent('error', { message: error.message || 'Failed to sync teams' });
+    if (error instanceof UserNotFoundError) {
+      sendEvent('error', { message: 'User not found', code: 'USER_NOT_FOUND' });
+    } else {
+      sendEvent('error', { message: error.message || 'Failed to sync teams' });
+    }
   } finally {
     res.end();
   }
@@ -309,6 +320,9 @@ app.post('/api/ringcentral/webhooks', async (req, res) => {
     res.json(data);
   } catch (error: any) {
     console.error('[POST /api/ringcentral/webhooks] Failed to create webhook:', error);
+    if (error instanceof UserNotFoundError) {
+      return res.status(401).json({ error: 'User not found' });
+    }
     res.status(500).json({ error: error.message || 'Failed to create webhook' });
   }
 });
