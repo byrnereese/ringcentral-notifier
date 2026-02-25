@@ -46,6 +46,15 @@ db.exec(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS webhook_events (
+    id TEXT PRIMARY KEY,
+    public_id TEXT,
+    payload TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  CREATE INDEX IF NOT EXISTS idx_webhook_events_public_id ON webhook_events(public_id);
 `);
 
 try {

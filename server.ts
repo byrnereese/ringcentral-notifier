@@ -8,7 +8,26 @@ import crypto from 'crypto';
 const app = express();
 const PORT = 3000;
 
+app.enable('trust proxy');
+
 app.use(express.json());
+
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - Headers: ${JSON.stringify(req.headers)}`);
+  next();
+});
+
+// CORS Middleware
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, x-user-id');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 const RC_CLIENT_ID = process.env.RC_CLIENT_ID || 'Z1WS9p45Ce0fy8NFEMRuIF';
 const RC_CLIENT_SECRET = process.env.RC_CLIENT_SECRET || '1BKY2vlFIFNcAPeZFkOSjffda1MpcrIjmfdF4DizVFhX';
@@ -101,6 +120,18 @@ app.get('/api/auth/callback', async (req, res) => {
     console.error('OAuth error:', error);
     res.status(500).send(`Authentication failed: ${error.message}`);
   }
+});
+
+app.get('/api/config', (req, res) => {
+  const appUrl = process.env.APP_URL || `https://${req.headers.host}`;
+  // Construct public URL by replacing 'ais-dev' with 'ais-pre' if present
+  // This ensures webhooks use the public, unauthenticated endpoint
+  const publicUrl = appUrl.replace('ais-dev', 'ais-pre');
+  
+  res.json({
+    appUrl,
+    publicUrl
+  });
 });
 
 // Notifiers API
@@ -249,9 +280,13 @@ app.get('/api/ringcentral/teams/sync', async (req, res) => {
 
 app.post('/api/ringcentral/webhooks', async (req, res) => {
   const userId = req.headers['x-user-id'] as string;
+  console.log(`[POST /api/ringcentral/webhooks] Request received from user: ${userId}`);
+
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
   const { groupId, isPersonal } = req.body;
+  console.log(`[POST /api/ringcentral/webhooks] Creating webhook for group: ${groupId}`);
+
   if (!groupId) return res.status(400).json({ error: 'groupId is required' });
 
   try {
@@ -262,14 +297,18 @@ app.post('/api/ringcentral/webhooks', async (req, res) => {
       body: JSON.stringify({ groupId })
     }, userId);
 
+    console.log(`[POST /api/ringcentral/webhooks] RC Response status: ${rcRes.status}`);
+
     if (!rcRes.ok) {
       const text = await rcRes.text();
+      console.error(`[POST /api/ringcentral/webhooks] RC Error: ${text}`);
       return res.status(rcRes.status).json({ error: text });
     }
     const data = await rcRes.json();
+    console.log(`[POST /api/ringcentral/webhooks] Webhook created successfully`);
     res.json(data);
   } catch (error: any) {
-    console.error('Failed to create webhook:', error);
+    console.error('[POST /api/ringcentral/webhooks] Failed to create webhook:', error);
     res.status(500).json({ error: error.message || 'Failed to create webhook' });
   }
 });
@@ -291,8 +330,8 @@ app.post('/api/notifiers', (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-  const { name, glip_webhook_url, sample_payload, adaptive_card_template, team_name } = req.body;
-  const id = uuidv4();
+  const { id: providedId, name, glip_webhook_url, sample_payload, adaptive_card_template, team_name } = req.body;
+  const id = providedId || uuidv4();
   const notification_url = `${process.env.APP_URL}/api/webhook/${id}`;
 
   try {
@@ -303,6 +342,9 @@ app.post('/api/notifiers', (req, res) => {
 
     stmt.run(id, userId, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name || null);
     
+    // Clean up any temporary webhook events for this ID
+    db.prepare('DELETE FROM webhook_events WHERE public_id = ?').run(id);
+
     const notifier = db.prepare('SELECT * FROM notifiers WHERE id = ?').get(id);
     res.json(notifier);
   } catch (error: any) {
@@ -433,16 +475,64 @@ Make it look professional, with a title, some facts, and maybe a description.
   }
 });
 
+// Webhook Discovery API
+app.get('/api/webhooks/:id/events', (req, res) => {
+  const { id } = req.params;
+  try {
+    const events = db.prepare('SELECT * FROM webhook_events WHERE public_id = ? ORDER BY created_at DESC LIMIT 10').all(id);
+    res.json(events);
+  } catch (error: any) {
+    console.error('Failed to fetch webhook events:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch webhook events' });
+  }
+});
+
 // Webhook Processor
 app.post('/api/webhook/:notifierId', async (req, res) => {
   const { notifierId } = req.params;
   const inboundPayload = req.body;
   const isTest = req.query.test === 'true' ? 1 : 0;
+  const traceId = uuidv4();
   
+  console.log(`[Webhook ${traceId}] Processing for notifier: ${notifierId}`);
+
   const notifier: any = db.prepare('SELECT * FROM notifiers WHERE id = ?').get(notifierId);
   
   if (!notifier) {
-    return res.status(404).json({ error: 'Notifier not found' });
+    // Store as a temporary event for discovery
+    try {
+      const eventId = uuidv4();
+      db.prepare('INSERT INTO webhook_events (id, public_id, payload) VALUES (?, ?, ?)').run(
+        eventId,
+        notifierId,
+        JSON.stringify(inboundPayload)
+      );
+      
+      // Keep only last 10 events for this ID
+      const events = db.prepare('SELECT id FROM webhook_events WHERE public_id = ? ORDER BY created_at DESC').all(notifierId);
+      if (events.length > 10) {
+        const idsToDelete = events.slice(10).map((e: any) => e.id);
+        if (idsToDelete.length > 0) {
+          const placeholders = idsToDelete.map(() => '?').join(',');
+          db.prepare(`DELETE FROM webhook_events WHERE id IN (${placeholders})`).run(...idsToDelete);
+        }
+      }
+      
+      console.log(`[Webhook ${traceId}] Stored for discovery. Notifier not found.`);
+      return res.status(202).json({ 
+        status: 'accepted',
+        message: 'Event received and stored for discovery',
+        traceId,
+        discovery: true
+      });
+    } catch (error: any) {
+      console.error(`[Webhook ${traceId}] Failed to store webhook event:`, error);
+      return res.status(500).json({ 
+        status: 'error',
+        error: 'Failed to process webhook',
+        traceId
+      });
+    }
   }
 
   let generatedCard = '';
@@ -492,6 +582,7 @@ app.post('/api/webhook/:notifierId', async (req, res) => {
     };
 
     // Post to RingCentral Glip Webhook
+    console.log(`[Webhook ${traceId}] Sending to RingCentral: ${notifier.glip_webhook_url}`);
     const rcResponse = await fetch(notifier.glip_webhook_url, {
       method: 'POST',
       headers: requestHeaders,
@@ -499,6 +590,7 @@ app.post('/api/webhook/:notifierId', async (req, res) => {
     });
 
     outboundResponse = await rcResponse.text();
+    console.log(`[Webhook ${traceId}] RC Response status: ${rcResponse.status}`);
     
     if (!rcResponse.ok) {
       status = 'error';
@@ -513,25 +605,29 @@ app.post('/api/webhook/:notifierId', async (req, res) => {
       }
     }
 
-    if (isTest) {
-      res.status(rcResponse.status).json({
-        response: outboundResponse,
-        request: outboundRequestData
-      });
-    } else {
-      res.status(rcResponse.status).send(outboundResponse);
-    }
+    // Return 202 Accepted with traceId
+    res.status(202).json({
+      status: 'accepted',
+      message: 'Event processed',
+      traceId,
+      rcStatus: rcResponse.status
+    });
+
   } catch (error: any) {
     status = 'error';
     outboundResponse = error.message;
-    if (isTest) {
-      res.status(500).json({ error: error.message, response: error.message });
-    } else {
-      res.status(500).json({ error: error.message });
-    }
+    console.error(`[Webhook ${traceId}] Processing error:`, error);
+    
+    res.status(500).json({ 
+      status: 'error',
+      error: error.message,
+      traceId
+    });
   } finally {
     // Log the activity
-    const logId = uuidv4();
+    const logId = uuidv4(); // Use separate ID for DB log entry, or reuse traceId? Let's use traceId for consistency if possible, but schema uses UUID.
+    // Let's use a new UUID for the log entry but store traceId if we had a column. We don't, so just log it.
+    
     let outboundRequestStr = '';
     try {
       // Reconstruct outbound request string if possible
@@ -565,16 +661,34 @@ app.post('/api/webhook/:notifierId', async (req, res) => {
       logId, 
       notifierId, 
       status, 
-      JSON.stringify({ headers: req.headers, body: inboundPayload }), 
+      JSON.stringify({ headers: req.headers, body: inboundPayload, traceId }), 
       generatedCard, 
       outboundRequestStr,
       outboundResponse,
       isTest
     );
+    console.log(`[Webhook ${traceId}] Logged activity: ${logId}`);
   }
 });
 
+app.get('/public-test', (req, res) => {
+  res.send('Public access working!');
+});
+
+app.get('/api/webhook/:notifierId', (req, res) => {
+  console.log(`[GET /api/webhook/${req.params.notifierId}] Method Not Allowed (likely redirect from POST)`);
+  res.status(405).send('Method Not Allowed. Please use POST.');
+});
+
+// Global error handler
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal Server Error' });
+});
+
 async function startServer() {
+  console.log(`[Startup] APP_URL: ${process.env.APP_URL}`);
+  
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -587,6 +701,12 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Routes registered:`);
+    app._router.stack.forEach((r: any) => {
+      if (r.route && r.route.path) {
+        console.log(`${Object.keys(r.route.methods).join(',').toUpperCase()} ${r.route.path}`);
+      }
+    });
   });
 }
 

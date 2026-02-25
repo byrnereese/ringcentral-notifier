@@ -1,11 +1,17 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Wand2, Save, ArrowLeft, Code, MessageSquare, X, Loader2, Search, Link as LinkIcon, User } from 'lucide-react';
+import { Wand2, Save, ArrowLeft, Code, MessageSquare, X, Loader2, Search, Link as LinkIcon, User, Eye, History, RefreshCw, Copy, Check } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
+import CardPreview from './CardPreview';
 
 export default function NotifierForm({ userId }: { userId: string }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const isEditing = !!id;
+  
+  // Generate a draft ID for new notifiers so we can show the webhook URL immediately
+  const [draftId] = useState(() => isEditing ? id : uuidv4());
+  const [copied, setCopied] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -26,11 +32,85 @@ export default function NotifierForm({ userId }: { userId: string }) {
   const [showManualInput, setShowManualInput] = useState(false);
   const [manualWebhookUrl, setManualWebhookUrl] = useState('');
 
+  // New state for features
+  const [showPreview, setShowPreview] = useState(false);
+  const [showEventsModal, setShowEventsModal] = useState(false);
+  const [recentEvents, setRecentEvents] = useState<any[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+  const [polling, setPolling] = useState(false);
+  const [appUrl, setAppUrl] = useState<string>('');
+
   useEffect(() => {
+    // Fetch app config to get the correct public URL
+    fetch('/api/config')
+      .then(res => res.json())
+      .then(data => {
+        let url = data.publicUrl || data.appUrl || window.location.origin;
+        // Force HTTPS if not localhost
+        if (url.startsWith('http:') && !url.includes('localhost')) {
+          url = url.replace('http:', 'https:');
+        }
+        setAppUrl(url);
+      })
+      .catch(err => {
+        console.error('Failed to fetch config', err);
+        setAppUrl(window.location.origin);
+      });
+
     if (isEditing) {
       fetchNotifier();
+    } else {
+      // Start polling for events on the draft ID
+      setPolling(true);
     }
   }, [id]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (polling && draftId) {
+      fetchRecentEvents(true); // Initial fetch
+      interval = setInterval(() => fetchRecentEvents(true), 3000);
+    }
+    return () => clearInterval(interval);
+  }, [polling, draftId]);
+
+  const fetchRecentEvents = async (silent = false) => {
+    if (!draftId) return;
+    if (!silent) setLoadingEvents(true);
+    try {
+      const res = await fetch(`/api/webhooks/${draftId}/events`);
+      if (res.ok) {
+        const events = await res.json();
+        setRecentEvents(events);
+        
+        // Auto-populate if we have events and the payload is still the default
+        if (events.length > 0 && !isEditing) {
+          const defaultPayload = '{\n  "event": "ticket_created",\n  "ticket": {\n    "id": "12345",\n    "title": "Server down",\n    "status": "open"\n  }\n}';
+          
+          // Use a more robust check (e.g. trimming or checking if it includes the default structure)
+          // Or simply check if it matches the initial state
+          if (formData.sample_payload === defaultPayload || formData.sample_payload.includes('"ticket_created"')) {
+            try {
+              const latestPayload = JSON.stringify(JSON.parse(events[0].payload), null, 2);
+              setFormData(prev => {
+                // Only update if it's different to avoid loops/re-renders
+                if (prev.sample_payload !== latestPayload) {
+                   return { ...prev, sample_payload: latestPayload };
+                }
+                return prev;
+              });
+            } catch (e) {
+              console.error('Failed to parse event payload', e);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch events', error);
+    } finally {
+      if (!silent) setLoadingEvents(false);
+    }
+  };
 
   const fetchNotifier = async () => {
     try {
@@ -140,8 +220,14 @@ export default function NotifierForm({ userId }: { userId: string }) {
         }));
         setShowTeamModal(false);
       } else {
-        const err = await res.json();
-        alert(`Failed to create webhook: ${err.error || 'Unknown error'}`);
+        const text = await res.text();
+        try {
+          const err = JSON.parse(text);
+          alert(`Failed to create webhook: ${err.error || 'Unknown error'}`);
+        } catch (e) {
+          console.error('Server returned non-JSON error:', text);
+          alert(`Failed to create webhook: Server returned an error. Check console for details.`);
+        }
       }
     } catch (error) {
       console.error('Failed to create webhook', error);
@@ -207,6 +293,11 @@ export default function NotifierForm({ userId }: { userId: string }) {
     try {
       const url = isEditing ? `/api/notifiers/${id}` : '/api/notifiers';
       const method = isEditing ? 'PUT' : 'POST';
+      
+      const payload = {
+        ...formData,
+        ...(isEditing ? {} : { id: draftId }) // Send the draft ID if creating new
+      };
 
       const res = await fetch(url, {
         method,
@@ -214,7 +305,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
           'Content-Type': 'application/json',
           'x-user-id': userId
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
 
       if (res.ok) {
@@ -241,7 +332,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h2 className="text-2xl font-bold text-slate-900">
-          {isEditing ? 'Edit Connector' : 'New Connector'}
+          {isEditing ? 'Edit Notifier' : 'New Notifier'}
         </h2>
       </div>
 
@@ -251,7 +342,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Connector Name</label>
+              <label className="text-sm font-medium text-slate-700">Notifier Name</label>
               <input
                 type="text"
                 required
@@ -295,10 +386,58 @@ export default function NotifierForm({ userId }: { userId: string }) {
                 <Code className="w-5 h-5 text-slate-400" />
                 Sample Webhook Payload
               </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  fetchRecentEvents();
+                  setShowEventsModal(true);
+                }}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+              >
+                <History className="w-3 h-3" />
+                Select from Past Events
+              </button>
             </div>
             <p className="text-sm text-slate-500">
               Paste a sample JSON payload from your source application. This helps the AI generate a matching Adaptive Card.
             </p>
+            
+            {!isEditing && (
+              <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 text-sm text-blue-800 flex flex-col gap-3">
+                <p className="font-semibold">Send a test event to this URL to auto-populate:</p>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input 
+                      type="text" 
+                      readOnly 
+                      value={appUrl ? `${appUrl}/api/webhook/${draftId}` : 'Loading...'}
+                      className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg font-mono text-xs text-slate-600 focus:outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (appUrl) {
+                        navigator.clipboard.writeText(`${appUrl}/api/webhook/${draftId}`);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 2000);
+                      }
+                    }}
+                    className="p-2 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 text-blue-600 transition-colors"
+                    title="Copy to clipboard"
+                  >
+                    {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                </div>
+                {recentEvents.length > 0 && (
+                  <div className="flex items-center gap-2 text-emerald-600 font-medium animate-pulse">
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
+                    New events received! Click "Select from Past Events" to use.
+                  </div>
+                )}
+              </div>
+            )}
+
             <textarea
               value={formData.sample_payload}
               onChange={e => setFormData({ ...formData, sample_payload: e.target.value })}
@@ -322,6 +461,15 @@ export default function NotifierForm({ userId }: { userId: string }) {
                 <Code className="w-5 h-5 text-slate-400" />
                 Adaptive Card Template
               </h3>
+              <button
+                type="button"
+                onClick={() => setShowPreview(true)}
+                disabled={!formData.adaptive_card_template}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1 disabled:opacity-50"
+              >
+                <Eye className="w-3 h-3" />
+                Preview Card
+              </button>
             </div>
             <p className="text-sm text-slate-500">
               Refine the generated Adaptive Card JSON. Use <code>{`{{key.subkey}}`}</code> syntax to inject values from the incoming webhook.
@@ -343,7 +491,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
             className="flex items-center gap-2 bg-indigo-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-70 shadow-sm"
           >
             <Save className="w-5 h-5" />
-            {loading ? 'Saving...' : 'Save Connector'}
+            {loading ? 'Saving...' : 'Save Notifier'}
           </button>
         </div>
       </form>
@@ -473,6 +621,97 @@ export default function NotifierForm({ userId }: { userId: string }) {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Preview Modal */}
+      {showPreview && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="flex justify-between items-center p-4 border-b border-slate-100">
+              <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <Eye className="w-5 h-5 text-indigo-600" />
+                Adaptive Card Preview
+              </h3>
+              <button 
+                onClick={() => setShowPreview(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 overflow-auto bg-slate-50">
+              <CardPreview cardJson={formData.adaptive_card_template} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Events Modal */}
+      {showEventsModal && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[80vh]">
+            <div className="flex justify-between items-center p-4 border-b border-slate-100">
+              <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <History className="w-5 h-5 text-indigo-600" />
+                Select from Past Events
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => fetchRecentEvents()}
+                  disabled={loadingEvents}
+                  className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors disabled:opacity-50"
+                  title="Refresh events"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingEvents ? 'animate-spin' : ''}`} />
+                </button>
+                <button 
+                  onClick={() => setShowEventsModal(false)}
+                  className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-4 flex-1 overflow-auto bg-slate-50">
+              {loadingEvents ? (
+                <div className="flex flex-col items-center justify-center py-12 text-slate-500">
+                  <Loader2 className="w-8 h-8 animate-spin mb-4 text-indigo-600" />
+                  <p>Loading events...</p>
+                </div>
+              ) : recentEvents.length === 0 ? (
+                <div className="text-center py-12 text-slate-500">
+                  <p>No events found.</p>
+                  <p className="text-sm mt-2">Send a webhook to the URL to see it here.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {recentEvents.map(event => (
+                    <div key={event.id} className="bg-white border border-slate-200 rounded-lg p-4 hover:border-indigo-300 transition-colors">
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-xs font-medium text-slate-500">
+                          {new Date(event.created_at).toLocaleString()}
+                        </span>
+                        <button
+                          onClick={() => {
+                            setFormData(prev => ({ ...prev, sample_payload: JSON.stringify(JSON.parse(event.payload), null, 2) }));
+                            setShowEventsModal(false);
+                          }}
+                          className="text-xs font-medium text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-3 py-1 rounded-full"
+                        >
+                          Use Payload
+                        </button>
+                      </div>
+                      <pre className="bg-slate-900 text-slate-300 p-3 rounded text-xs font-mono overflow-auto max-h-32">
+                        {JSON.stringify(JSON.parse(event.payload), null, 2)}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
