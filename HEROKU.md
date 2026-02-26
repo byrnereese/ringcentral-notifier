@@ -15,6 +15,8 @@ On Heroku, the filesystem is **ephemeral**. This means that any data written to 
 
 For a production deployment with persistent data, you must migrate the database layer to use a persistent database service like **PostgreSQL**. This would require code changes in `server/db.ts` and `server.ts` to use a PostgreSQL client (e.g., `pg` or an ORM like `Prisma` or `Drizzle`) instead of `better-sqlite3`.
 
+**See [POSTGRES_MIGRATION.md](./POSTGRES_MIGRATION.md) for detailed instructions on how to migrate.**
+
 For demonstration purposes, you can deploy as-is, but be aware that **all user data, notifiers, and logs will be reset periodically.**
 
 ## Deployment Steps

@@ -29,9 +29,15 @@ app.use((req, res, next) => {
   next();
 });
 
-const RC_CLIENT_ID = process.env.RC_CLIENT_ID || 'Z1WS9p45Ce0fy8NFEMRuIF';
-const RC_CLIENT_SECRET = process.env.RC_CLIENT_SECRET || '1BKY2vlFIFNcAPeZFkOSjffda1MpcrIjmfdF4DizVFhX';
+const RC_CLIENT_ID = process.env.RC_CLIENT_ID;
+const RC_CLIENT_SECRET = process.env.RC_CLIENT_SECRET;
 const RC_SERVER_URL = process.env.RC_SERVER_URL || 'https://platform.ringcentral.com';
+
+if (!RC_CLIENT_ID || !RC_CLIENT_SECRET) {
+  console.error('Missing RC_CLIENT_ID or RC_CLIENT_SECRET environment variables');
+  // We don't throw here to allow the server to start for health checks, 
+  // but auth routes will fail.
+}
 
 app.get('/api/auth/url', (req, res) => {
   const redirectUri = `${process.env.APP_URL}/api/auth/callback`;
@@ -81,24 +87,24 @@ app.get('/api/auth/callback', async (req, res) => {
       throw new Error(tokenData.error_description || 'Failed to get token');
     }
 
-    let user: any = db.prepare('SELECT id FROM users WHERE ringcentral_id = ?').get(tokenData.owner_id);
+    let user: any = await db.get('SELECT id FROM users WHERE ringcentral_id = ?', [tokenData.owner_id]);
     let actualUserId;
     
     if (user) {
       actualUserId = user.id;
-      db.prepare('UPDATE users SET access_token = ?, refresh_token = ? WHERE id = ?').run(
+      await db.run('UPDATE users SET access_token = ?, refresh_token = ? WHERE id = ?', [
         tokenData.access_token, 
         tokenData.refresh_token, 
         actualUserId
-      );
+      ]);
     } else {
       actualUserId = uuidv4();
-      db.prepare('INSERT INTO users (id, ringcentral_id, access_token, refresh_token) VALUES (?, ?, ?, ?)').run(
+      await db.run('INSERT INTO users (id, ringcentral_id, access_token, refresh_token) VALUES (?, ?, ?, ?)', [
         actualUserId, 
         tokenData.owner_id, 
         tokenData.access_token, 
         tokenData.refresh_token
-      );
+      ]);
     }
 
     res.send(`
@@ -143,7 +149,7 @@ class UserNotFoundError extends Error {
 }
 
 async function rcFetch(url: string, options: any, userId: string) {
-  let user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  let user: any = await db.get('SELECT * FROM users WHERE id = ?', [userId]);
   if (!user) throw new UserNotFoundError('User not found');
 
   let res = await fetch(`${RC_SERVER_URL}${url}`, {
@@ -170,11 +176,11 @@ async function rcFetch(url: string, options: any, userId: string) {
     
     if (tokenResponse.ok) {
       const tokenData = await tokenResponse.json();
-      db.prepare('UPDATE users SET access_token = ?, refresh_token = ? WHERE id = ?').run(
+      await db.run('UPDATE users SET access_token = ?, refresh_token = ? WHERE id = ?', [
         tokenData.access_token,
         tokenData.refresh_token,
         userId
-      );
+      ]);
       
       // Retry
       res = await fetch(`${RC_SERVER_URL}${url}`, {
@@ -194,7 +200,7 @@ app.get('/api/ringcentral/teams', async (req, res) => {
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const cachedTeams = db.prepare('SELECT * FROM teams WHERE user_id = ?').all(userId);
+    const cachedTeams = await db.query('SELECT * FROM teams WHERE user_id = ?', [userId]);
     res.json({ records: cachedTeams.map((t: any) => ({ id: t.id, name: t.name, isPersonal: !!t.is_personal })) });
   } catch (error: any) {
     console.error('Failed to fetch teams from cache:', error);
@@ -215,15 +221,6 @@ app.get('/api/ringcentral/teams/sync', async (req, res) => {
   };
 
   try {
-    const insertTeam = db.prepare(`
-      INSERT INTO teams (id, user_id, name, is_personal, updated_at)
-      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(id) DO UPDATE SET
-        name = excluded.name,
-        is_personal = excluded.is_personal,
-        updated_at = CURRENT_TIMESTAMP
-    `);
-
     // Fetch personal chat first
     try {
       const chatRes = await rcFetch('/restapi/v1.0/glip/chats?type=Personal', { method: 'GET' }, userId);
@@ -234,7 +231,14 @@ app.get('/api/ringcentral/teams/sync', async (req, res) => {
           personalChat.name = 'Personal Chat';
           personalChat.isPersonal = true;
           
-          insertTeam.run(personalChat.id, userId, personalChat.name, 1);
+          await db.run(`
+            INSERT INTO teams (id, user_id, name, is_personal, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+              name = excluded.name,
+              is_personal = excluded.is_personal,
+              updated_at = CURRENT_TIMESTAMP
+          `, [personalChat.id, userId, personalChat.name, 1]);
           sendEvent('teams', [personalChat]);
         }
       }
@@ -259,12 +263,19 @@ app.get('/api/ringcentral/teams/sync', async (req, res) => {
       
       const data = await rcRes.json();
       if (data.records && Array.isArray(data.records)) {
-        const dbTransaction = db.transaction((teams: any[]) => {
-          for (const team of teams) {
-            insertTeam.run(team.id, userId, team.name || 'Unnamed Conversation', 0);
+        // Use transaction for batch insert
+        await db.transaction(async (tx) => {
+          for (const team of data.records) {
+             await tx.run(`
+              INSERT INTO teams (id, user_id, name, is_personal, updated_at)
+              VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+              ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                is_personal = excluded.is_personal,
+                updated_at = CURRENT_TIMESTAMP
+            `, [team.id, userId, team.name || 'Unnamed Conversation', 0]);
           }
         });
-        dbTransaction(data.records);
         
         sendEvent('teams', data.records.map((t: any) => ({ id: t.id, name: t.name, isPersonal: false })));
       }
@@ -327,12 +338,12 @@ app.post('/api/ringcentral/webhooks', async (req, res) => {
   }
 });
 
-app.get('/api/notifiers', (req, res) => {
+app.get('/api/notifiers', async (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const notifiers = db.prepare('SELECT * FROM notifiers WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+    const notifiers = await db.query('SELECT * FROM notifiers WHERE user_id = ? ORDER BY created_at DESC', [userId]);
     res.json(notifiers);
   } catch (error: any) {
     console.error('Failed to fetch notifiers:', error);
@@ -340,7 +351,7 @@ app.get('/api/notifiers', (req, res) => {
   }
 });
 
-app.post('/api/notifiers', (req, res) => {
+app.post('/api/notifiers', async (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -349,17 +360,15 @@ app.post('/api/notifiers', (req, res) => {
   const notification_url = `${process.env.APP_URL}/api/webhook/${id}`;
 
   try {
-    const stmt = db.prepare(`
+    await db.run(`
       INSERT INTO notifiers (id, user_id, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    stmt.run(id, userId, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name || null);
+    `, [id, userId, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name || null]);
     
     // Clean up any temporary webhook events for this ID
-    db.prepare('DELETE FROM webhook_events WHERE public_id = ?').run(id);
+    await db.run('DELETE FROM webhook_events WHERE public_id = ?', [id]);
 
-    const notifier = db.prepare('SELECT * FROM notifiers WHERE id = ?').get(id);
+    const notifier = await db.get('SELECT * FROM notifiers WHERE id = ?', [id]);
     res.json(notifier);
   } catch (error: any) {
     console.error('Failed to create notifier:', error);
@@ -367,7 +376,7 @@ app.post('/api/notifiers', (req, res) => {
   }
 });
 
-app.put('/api/notifiers/:id', (req, res) => {
+app.put('/api/notifiers/:id', async (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -375,15 +384,13 @@ app.put('/api/notifiers/:id', (req, res) => {
   const { id } = req.params;
 
   try {
-    const stmt = db.prepare(`
+    await db.run(`
       UPDATE notifiers 
       SET name = ?, glip_webhook_url = ?, sample_payload = ?, adaptive_card_template = ?, team_name = ?
       WHERE id = ? AND user_id = ?
-    `);
-
-    stmt.run(name, glip_webhook_url, sample_payload, adaptive_card_template, team_name || null, id, userId);
+    `, [name, glip_webhook_url, sample_payload, adaptive_card_template, team_name || null, id, userId]);
     
-    const notifier = db.prepare('SELECT * FROM notifiers WHERE id = ?').get(id);
+    const notifier = await db.get('SELECT * FROM notifiers WHERE id = ?', [id]);
     res.json(notifier);
   } catch (error: any) {
     console.error('Failed to update notifier:', error);
@@ -391,14 +398,14 @@ app.put('/api/notifiers/:id', (req, res) => {
   }
 });
 
-app.delete('/api/notifiers/:id', (req, res) => {
+app.delete('/api/notifiers/:id', async (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
   const { id } = req.params;
   try {
-    db.prepare('DELETE FROM logs WHERE notifier_id = ?').run(id);
-    db.prepare('DELETE FROM notifiers WHERE id = ? AND user_id = ?').run(id, userId);
+    await db.run('DELETE FROM logs WHERE notifier_id = ?', [id]);
+    await db.run('DELETE FROM notifiers WHERE id = ? AND user_id = ?', [id, userId]);
     
     res.json({ success: true });
   } catch (error: any) {
@@ -408,19 +415,19 @@ app.delete('/api/notifiers/:id', (req, res) => {
 });
 
 // Logs API
-app.get('/api/logs', (req, res) => {
+app.get('/api/logs', async (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const logs = db.prepare(`
+    const logs = await db.query(`
       SELECT logs.*, notifiers.name as notifier_name 
       FROM logs 
       JOIN notifiers ON logs.notifier_id = notifiers.id 
       WHERE notifiers.user_id = ? 
       ORDER BY logs.created_at DESC 
       LIMIT 100
-    `).all(userId);
+    `, [userId]);
     
     res.json(logs);
   } catch (error: any) {
@@ -429,7 +436,7 @@ app.get('/api/logs', (req, res) => {
   }
 });
 
-app.get('/api/notifiers/:id/logs', (req, res) => {
+app.get('/api/notifiers/:id/logs', async (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -437,10 +444,10 @@ app.get('/api/notifiers/:id/logs', (req, res) => {
   
   try {
     // Verify ownership
-    const notifier = db.prepare('SELECT id FROM notifiers WHERE id = ? AND user_id = ?').get(id, userId);
+    const notifier = await db.get('SELECT id FROM notifiers WHERE id = ? AND user_id = ?', [id, userId]);
     if (!notifier) return res.status(404).json({ error: 'Notifier not found' });
 
-    const logs = db.prepare('SELECT * FROM logs WHERE notifier_id = ? ORDER BY created_at DESC LIMIT 50').all(id);
+    const logs = await db.query('SELECT * FROM logs WHERE notifier_id = ? ORDER BY created_at DESC LIMIT 50', [id]);
     res.json(logs);
   } catch (error: any) {
     console.error('Failed to fetch notifier logs:', error);
@@ -490,10 +497,10 @@ Make it look professional, with a title, some facts, and maybe a description.
 });
 
 // Webhook Discovery API
-app.get('/api/webhooks/:id/events', (req, res) => {
+app.get('/api/webhooks/:id/events', async (req, res) => {
   const { id } = req.params;
   try {
-    const events = db.prepare('SELECT * FROM webhook_events WHERE public_id = ? ORDER BY created_at DESC LIMIT 10').all(id);
+    const events = await db.query('SELECT * FROM webhook_events WHERE public_id = ? ORDER BY created_at DESC LIMIT 10', [id]);
     res.json(events);
   } catch (error: any) {
     console.error('Failed to fetch webhook events:', error);
@@ -510,25 +517,26 @@ app.post('/api/webhook/:notifierId', async (req, res) => {
   
   console.log(`[Webhook ${traceId}] Processing for notifier: ${notifierId}`);
 
-  const notifier: any = db.prepare('SELECT * FROM notifiers WHERE id = ?').get(notifierId);
+  const notifier: any = await db.get('SELECT * FROM notifiers WHERE id = ?', [notifierId]);
   
   if (!notifier) {
     // Store as a temporary event for discovery
     try {
       const eventId = uuidv4();
-      db.prepare('INSERT INTO webhook_events (id, public_id, payload) VALUES (?, ?, ?)').run(
+      await db.run('INSERT INTO webhook_events (id, public_id, payload) VALUES (?, ?, ?)', [
         eventId,
         notifierId,
         JSON.stringify(inboundPayload)
-      );
+      ]);
       
       // Keep only last 10 events for this ID
-      const events = db.prepare('SELECT id FROM webhook_events WHERE public_id = ? ORDER BY created_at DESC').all(notifierId);
+      const events = await db.query('SELECT id FROM webhook_events WHERE public_id = ? ORDER BY created_at DESC', [notifierId]);
       if (events.length > 10) {
         const idsToDelete = events.slice(10).map((e: any) => e.id);
         if (idsToDelete.length > 0) {
-          const placeholders = idsToDelete.map(() => '?').join(',');
-          db.prepare(`DELETE FROM webhook_events WHERE id IN (${placeholders})`).run(...idsToDelete);
+          // Construct placeholders for IN clause
+          const placeholders = idsToDelete.map((_, i) => `$${i + 1}`).join(',');
+          await db.run(`DELETE FROM webhook_events WHERE id IN (${placeholders})`, idsToDelete);
         }
       }
       
@@ -639,8 +647,7 @@ app.post('/api/webhook/:notifierId', async (req, res) => {
     });
   } finally {
     // Log the activity
-    const logId = uuidv4(); // Use separate ID for DB log entry, or reuse traceId? Let's use traceId for consistency if possible, but schema uses UUID.
-    // Let's use a new UUID for the log entry but store traceId if we had a column. We don't, so just log it.
+    const logId = uuidv4(); 
     
     let outboundRequestStr = '';
     try {
@@ -668,10 +675,10 @@ app.post('/api/webhook/:notifierId', async (req, res) => {
       });
     } catch(e) {}
 
-    db.prepare(`
+    await db.run(`
       INSERT INTO logs (id, notifier_id, status, inbound_request, generated_card, outbound_request, outbound_response, is_test)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       logId, 
       notifierId, 
       status, 
@@ -680,7 +687,7 @@ app.post('/api/webhook/:notifierId', async (req, res) => {
       outboundRequestStr,
       outboundResponse,
       isTest
-    );
+    ]);
     console.log(`[Webhook ${traceId}] Logged activity: ${logId}`);
   }
 });
