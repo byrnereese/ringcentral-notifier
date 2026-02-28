@@ -472,14 +472,16 @@ You are an expert at creating Microsoft Adaptive Cards for RingCentral Team Mess
 Your goal is to create a TEMPLATE, not a static card.
 
 CRITICAL INSTRUCTION:
-You MUST replace specific values from the sample payload with their corresponding {{variable}} tokens.
-Do NOT hardcode values from the sample payload into the card.
+1. Strictly use Adaptive Cards schema version 1.2. Do not use features from newer versions.
+2. You MUST replace specific values from the sample payload with their corresponding {{variable}} tokens.
+3. Do NOT hardcode values from the sample payload into the card.
 
 Example:
 If the payload is: {"ticket": {"title": "Server Down", "id": 123}}
 You MUST generate:
 {
   "type": "AdaptiveCard",
+  "version": "1.2",
   "body": [
     { "type": "TextBlock", "text": "Ticket: {{ticket.title}}" },
     { "type": "FactSet", "facts": [{ "title": "ID", "value": "{{ticket.id}}" }] }

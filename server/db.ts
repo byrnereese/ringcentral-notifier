@@ -213,8 +213,35 @@ class PostgresAdapter implements IDatabase {
         CREATE INDEX IF NOT EXISTS idx_webhook_events_public_id ON webhook_events(public_id);
       `);
       
-      // Migrations - checking columns in PG is more complex, skipping for now as this is a fresh init for PG usually.
-      // If needed, we'd query information_schema.
+      // Migrations for Postgres
+      try {
+        await client.query(`
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifiers' AND column_name='team_name') THEN
+              ALTER TABLE notifiers ADD COLUMN team_name TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifiers' AND column_name='filter_variable') THEN
+              ALTER TABLE notifiers ADD COLUMN filter_variable TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifiers' AND column_name='filter_operator') THEN
+              ALTER TABLE notifiers ADD COLUMN filter_operator TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifiers' AND column_name='filter_value') THEN
+              ALTER TABLE notifiers ADD COLUMN filter_value TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='logs' AND column_name='is_test') THEN
+              ALTER TABLE logs ADD COLUMN is_test BOOLEAN DEFAULT FALSE;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='logs' AND column_name='outbound_request') THEN
+              ALTER TABLE logs ADD COLUMN outbound_request TEXT;
+            END IF;
+          END
+          $$;
+        `);
+      } catch (err) {
+        console.error('Failed to run Postgres migrations:', err);
+      }
     } catch (err) {
       console.error('Failed to initialize Postgres DB:', err);
     } finally {
