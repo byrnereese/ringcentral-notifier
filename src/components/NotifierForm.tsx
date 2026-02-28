@@ -40,8 +40,32 @@ export default function NotifierForm({ userId }: { userId: string }) {
     team_name: '',
     filter_variable: '',
     filter_operator: '',
-    filter_value: ''
+    filter_value: '',
+    clio_model: 'Matter',
+    clio_events: ['created', 'updated']
   });
+
+  const CLIO_MODELS = [
+    { value: 'Activity', label: 'Activity' },
+    { value: 'Bill', label: 'Bill' },
+    { value: 'CalendarEntry', label: 'Calendar Entry' },
+    { value: 'ClioPaymentsPayment', label: 'Clio Payment' },
+    { value: 'Communication', label: 'Communication' },
+    { value: 'Contact', label: 'Contact' },
+    { value: 'Document', label: 'Document' },
+    { value: 'Folder', label: 'Folder' },
+    { value: 'Matter', label: 'Matter' },
+    { value: 'Task', label: 'Task' }
+  ];
+
+  const CLIO_EVENTS = [
+    { value: 'created', label: 'Created' },
+    { value: 'updated', label: 'Updated' },
+    { value: 'deleted', label: 'Deleted' },
+    { value: 'matter_opened', label: 'Matter Opened' },
+    { value: 'matter_pended', label: 'Matter Pended' },
+    { value: 'matter_closed', label: 'Matter Closed' }
+  ];
 
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -603,6 +627,49 @@ export default function NotifierForm({ userId }: { userId: string }) {
                 </button>
               )}
             </div>
+
+            {clioConnected && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-100">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-slate-700">
+                    Resource to Monitor
+                  </label>
+                  <select
+                    value={formData.clio_model}
+                    onChange={(e) => setFormData({ ...formData, clio_model: e.target.value })}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                  >
+                    {CLIO_MODELS.map(model => (
+                      <option key={model.value} value={model.value}>{model.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-slate-700">
+                    Events to Trigger On
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 p-3 border border-slate-300 rounded-lg bg-slate-50 max-h-40 overflow-y-auto">
+                    {CLIO_EVENTS.map(event => (
+                      <label key={event.value} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={formData.clio_events.includes(event.value)}
+                          onChange={(e) => {
+                            const newEvents = e.target.checked
+                              ? [...formData.clio_events, event.value]
+                              : formData.clio_events.filter(ev => ev !== event.value);
+                            setFormData({ ...formData, clio_events: newEvents });
+                          }}
+                          className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                        />
+                        <span className="text-sm text-slate-700">{event.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

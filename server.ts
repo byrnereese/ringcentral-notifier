@@ -547,14 +547,14 @@ app.post('/api/clio/webhook', async (req, res) => {
     const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
     const webhookUrl = `${appUrl}/api/webhook/${notifierId}`;
 
+    // Fetch the notifier to get the selected model and events
+    const notifier = await db.get('SELECT * FROM notifiers WHERE id = ?', [notifierId]);
+    if (!notifier) return res.status(404).json({ error: 'Notifier not found' });
+
+    const model = notifier.clio_model || 'Matter';
+    const events = notifier.clio_events ? notifier.clio_events.split(',') : ['created', 'updated'];
+
     // Create webhook in Clio
-    // Clio API v4 requires 'url', 'fields', 'model' in the root or data object?
-    // Docs say: POST /api/v4/webhooks
-    // Body: { "data": { "url": "...", "fields": "id,display_number", "model": "Matter" } }
-    // Fields should be comma separated string or array? Docs usually imply string for some, array for others.
-    // Let's try array first, if fail, try string.
-    // Actually, looking at docs: "fields": "id,display_number" (string)
-    
     const response = await clioFetch('/webhooks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -562,9 +562,8 @@ app.post('/api/clio/webhook', async (req, res) => {
         data: {
           url: webhookUrl,
           fields: "id,display_number,description,status,client", 
-          model: "Matter",
-          // events: "created,updated" // Some docs mention events, some don't. Default is all?
-          // Let's stick to basics.
+          model: model,
+          events: events
         }
       })
     }, userId);
@@ -605,9 +604,21 @@ app.post('/api/notifiers', async (req, res) => {
 
   try {
     await db.run(`
-      INSERT INTO notifiers (id, user_id, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name, filter_variable, filter_operator, filter_value)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, userId, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name || null, filter_variable || null, filter_operator || null, filter_value || null]);
+      INSERT INTO notifiers (id, user_id, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name, filter_variable, filter_operator, filter_value, provider, clio_model, clio_events)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        glip_webhook_url = excluded.glip_webhook_url,
+        sample_payload = excluded.sample_payload,
+        adaptive_card_template = excluded.adaptive_card_template,
+        team_name = excluded.team_name,
+        filter_variable = excluded.filter_variable,
+        filter_operator = excluded.filter_operator,
+        filter_value = excluded.filter_value,
+        provider = excluded.provider,
+        clio_model = excluded.clio_model,
+        clio_events = excluded.clio_events
+    `, [id, userId, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name || null, filter_variable || null, filter_operator || null, filter_value || null, req.body.provider || 'custom', req.body.clio_model || null, req.body.clio_events || null]);
     
     // Clean up any temporary webhook events for this ID
     await db.run('DELETE FROM webhook_events WHERE public_id = ?', [id]);
@@ -624,15 +635,15 @@ app.put('/api/notifiers/:id', async (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-  const { name, glip_webhook_url, sample_payload, adaptive_card_template, team_name, filter_variable, filter_operator, filter_value } = req.body;
+  const { name, glip_webhook_url, sample_payload, adaptive_card_template, team_name, filter_variable, filter_operator, filter_value, clio_model, clio_events } = req.body;
   const { id } = req.params;
 
   try {
     await db.run(`
       UPDATE notifiers 
-      SET name = ?, glip_webhook_url = ?, sample_payload = ?, adaptive_card_template = ?, team_name = ?, filter_variable = ?, filter_operator = ?, filter_value = ?
+      SET name = ?, glip_webhook_url = ?, sample_payload = ?, adaptive_card_template = ?, team_name = ?, filter_variable = ?, filter_operator = ?, filter_value = ?, clio_model = ?, clio_events = ?
       WHERE id = ? AND user_id = ?
-    `, [name, glip_webhook_url, sample_payload, adaptive_card_template, team_name || null, filter_variable || null, filter_operator || null, filter_value || null, id, userId]);
+    `, [name, glip_webhook_url, sample_payload, adaptive_card_template, team_name || null, filter_variable || null, filter_operator || null, filter_value || null, clio_model || null, clio_events || null, id, userId]);
     
     const notifier = await db.get('SELECT * FROM notifiers WHERE id = ?', [id]);
     res.json(notifier);
@@ -708,7 +719,11 @@ app.post('/api/generate-card', async (req, res) => {
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+    if (!apiKey) {
+      throw new Error('Gemini API key not configured');
+    }
+    const ai = new GoogleGenAI({ apiKey });
     const prompt = `
 You are an expert at creating Microsoft Adaptive Cards for RingCentral Team Messaging.
 Your goal is to create a TEMPLATE, not a static card.
