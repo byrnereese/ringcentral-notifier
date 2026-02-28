@@ -1,6 +1,6 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Wand2, Save, ArrowLeft, Code, MessageSquare, X, Loader2, Search, Link as LinkIcon, User, Eye, History, RefreshCw, Copy, Check, Play } from 'lucide-react';
+import { Wand2, Save, ArrowLeft, Code, MessageSquare, X, Loader2, Search, Link as LinkIcon, User, Eye, History, RefreshCw, Copy, Check, Play, ChevronDown, ChevronRight } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import CardPreview from './CardPreview';
 
@@ -45,6 +45,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [polling, setPolling] = useState(false);
   const [appUrl, setAppUrl] = useState<string>('');
+  const [isFilteringExpanded, setIsFilteringExpanded] = useState(false);
 
   // Extract variables from payload whenever it changes
   useEffect(() => {
@@ -168,6 +169,10 @@ export default function NotifierForm({ userId }: { userId: string }) {
           filter_operator: notifier.filter_operator || '',
           filter_value: notifier.filter_value || ''
         });
+        
+        if (notifier.filter_variable || notifier.filter_operator || notifier.filter_value) {
+          setIsFilteringExpanded(true);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch notifier', error);
@@ -672,58 +677,73 @@ export default function NotifierForm({ userId }: { userId: string }) {
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-4">Filtering Rules (Optional)</h3>
-          <p className="text-sm text-slate-500">
-            Define a condition to filter out events. If the condition matches, the event will NOT be posted to RingCentral.
-          </p>
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setIsFilteringExpanded(!isFilteringExpanded)}
+            className="w-full flex items-center justify-between p-6 bg-white hover:bg-slate-50 transition-colors"
+          >
+            <div className="flex flex-col items-start gap-1">
+              <h3 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                {isFilteringExpanded ? <ChevronDown className="w-5 h-5 text-slate-400" /> : <ChevronRight className="w-5 h-5 text-slate-400" />}
+                Filtering Rules (Optional)
+              </h3>
+              <p className="text-sm text-slate-500 text-left pl-7">
+                Define a condition to filter out events. If the condition matches, the event will NOT be posted to RingCentral.
+              </p>
+            </div>
+          </button>
           
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Variable</label>
-              <select
-                value={formData.filter_variable}
-                onChange={e => setFormData({ ...formData, filter_variable: e.target.value })}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-white"
-              >
-                <option value="">Select variable...</option>
-                {availableVariables.map(v => (
-                  <option key={v} value={v}>{v}</option>
-                ))}
-              </select>
-              <p className="text-xs text-slate-400">Variables extracted from sample payload</p>
+          {isFilteringExpanded && (
+            <div className="p-6 pt-0 border-t border-slate-100">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">Variable</label>
+                  <select
+                    value={formData.filter_variable}
+                    onChange={e => setFormData({ ...formData, filter_variable: e.target.value })}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-white"
+                  >
+                    <option value="">Select variable...</option>
+                    {availableVariables.map(v => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-400">Variables extracted from sample payload</p>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">Operator</label>
+                  <select
+                    value={formData.filter_operator}
+                    onChange={e => setFormData({ ...formData, filter_operator: e.target.value })}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-white"
+                  >
+                    <option value="">Select operator...</option>
+                    <option value="equals">Equals</option>
+                    <option value="not_equals">Does not equal</option>
+                    <option value="contains">Contains</option>
+                    <option value="not_contains">Does not contain</option>
+                    <option value="starts_with">Starts with</option>
+                    <option value="ends_with">Ends with</option>
+                    <option value="greater_than">Greater than</option>
+                    <option value="less_than">Less than</option>
+                  </select>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">Value</label>
+                  <input
+                    type="text"
+                    value={formData.filter_value}
+                    onChange={e => setFormData({ ...formData, filter_value: e.target.value })}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                    placeholder="Value to compare against"
+                  />
+                </div>
+              </div>
             </div>
-            
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Operator</label>
-              <select
-                value={formData.filter_operator}
-                onChange={e => setFormData({ ...formData, filter_operator: e.target.value })}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-white"
-              >
-                <option value="">Select operator...</option>
-                <option value="equals">Equals</option>
-                <option value="not_equals">Does not equal</option>
-                <option value="contains">Contains</option>
-                <option value="not_contains">Does not contain</option>
-                <option value="starts_with">Starts with</option>
-                <option value="ends_with">Ends with</option>
-                <option value="greater_than">Greater than</option>
-                <option value="less_than">Less than</option>
-              </select>
-            </div>
-            
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Value</label>
-              <input
-                type="text"
-                value={formData.filter_value}
-                onChange={e => setFormData({ ...formData, filter_value: e.target.value })}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                placeholder="Value to compare against"
-              />
-            </div>
-          </div>
+          )}
         </div>
 
         <div className="flex justify-end pt-4 gap-3">
