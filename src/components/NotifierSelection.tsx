@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { useState, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Lock } from 'lucide-react';
+import { ArrowLeft, Plus, Lock, Briefcase, Share2, Eye, Settings, MessageSquare } from 'lucide-react';
 
 interface NotifierType {
   id: string;
   name: string;
   description: string;
-  icon: string;
+  icon: ReactNode;
   enabled: boolean;
   comingSoon?: boolean;
 }
@@ -16,30 +16,37 @@ const NOTIFIER_TYPES: NotifierType[] = [
     id: 'clio',
     name: 'Clio',
     description: 'Connect to Clio Manage to receive notifications about Matters, Contacts, and more.',
-    icon: 'https://logo.clearbit.com/clio.com',
+    icon: <img src="/icons/icon-clio.png" alt="Clio" className="w-full h-full object-cover rounded-lg" />,
     enabled: true
   },
   {
     id: 'hootsuite',
     name: 'Hootsuite',
     description: 'Receive updates from your social media channels.',
-    icon: 'https://logo.clearbit.com/hootsuite.com',
-    enabled: false,
+    icon: <img src="/icons/icon-hootsuite.png" alt="Hootsuite" className="w-full h-full object-cover rounded-lg" />,
+    enabled: true,
     comingSoon: true
   },
   {
     id: 'birdeye',
     name: 'BirdEye',
     description: 'Get notified about new reviews and customer feedback.',
-    icon: 'https://logo.clearbit.com/birdeye.com',
-    enabled: false,
+    icon: <img src="/icons/icon-birdeye.png" alt="BirdEye" className="w-full h-full object-cover rounded-lg" />,
+    enabled: true,
     comingSoon: true
+  },
+  {
+    id: 'uservoice',
+    name: 'UserVoice',
+    description: 'Receive notifications about new suggestions and comments.',
+    icon: <img src="/icons/icon-uservoice.png" alt="UserVoice" className="w-full h-full object-cover rounded-lg" />,
+    enabled: true
   },
   {
     id: 'custom',
     name: 'Custom Notifier',
     description: 'Create a generic webhook endpoint to receive data from any service.',
-    icon: '',
+    icon: <Settings className="w-8 h-8 text-slate-600" />,
     enabled: true
   }
 ];
@@ -85,7 +92,7 @@ export default function NotifierSelection() {
           >
             <div className="flex items-start justify-between mb-4">
               <div className="w-12 h-12 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold text-xl">
-                {type.icon ? <img src={type.icon} alt={type.name} className="w-8 h-8" onError={(e) => (e.currentTarget.style.display = 'none')} /> : type.name[0]}
+                {type.icon}
               </div>
               {type.comingSoon && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">

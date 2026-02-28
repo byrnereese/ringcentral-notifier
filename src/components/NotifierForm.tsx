@@ -1,6 +1,6 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, FormEvent, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Wand2, Save, ArrowLeft, Code, MessageSquare, X, Loader2, Search, Link as LinkIcon, User, Eye, History, RefreshCw, Copy, Check, Play, ChevronDown, ChevronRight } from 'lucide-react';
+import { Wand2, Save, ArrowLeft, Code, MessageSquare, X, Loader2, Search, Link as LinkIcon, User, Eye, History, RefreshCw, Copy, Check, Play, ChevronDown, ChevronRight, Briefcase, Hash, MoreVertical } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import CardPreview from './CardPreview';
 
@@ -17,8 +17,13 @@ export default function NotifierForm({ userId }: { userId: string }) {
   const [draftId] = useState(() => isEditing ? id : uuidv4());
   const [copied, setCopied] = useState(false);
 
+  const adaptiveCardRef = useRef<HTMLTextAreaElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [showVariablePicker, setShowVariablePicker] = useState(false);
+
   const [formData, setFormData] = useState({
-    name: provider === 'clio' ? 'Clio Notifier' : '',
+    name: provider === 'clio' ? 'Clio Notifier' : provider === 'uservoice' ? 'UserVoice Notifier' : '',
     glip_webhook_url: '',
     sample_payload: provider === 'clio' ? JSON.stringify({
       "data": {
@@ -34,6 +39,19 @@ export default function NotifierForm({ userId }: { userId: string }) {
       "meta": {
         "event": "Matter created",
         "timestamp": "2023-01-01T12:00:00Z"
+      }
+    }, null, 2) : provider === 'uservoice' ? JSON.stringify({
+      "event": "new_suggestion",
+      "suggestion": {
+        "id": 123,
+        "title": "Add dark mode",
+        "text": "Please add a dark mode to the app.",
+        "url": "http://feedback.uservoice.com/forums/123/suggestions/456",
+        "creator": {
+          "name": "John Doe",
+          "email": "john@example.com"
+        },
+        "votes_count": 10
       }
     }, null, 2) : '{\n  "event": "ticket_created",\n  "ticket": {\n    "id": "12345",\n    "title": "Server down",\n    "status": "open"\n  }\n}',
     adaptive_card_template: '',
@@ -103,6 +121,16 @@ export default function NotifierForm({ userId }: { userId: string }) {
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowMoreMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   const handleConnectClio = async () => {
@@ -523,6 +551,29 @@ export default function NotifierForm({ userId }: { userId: string }) {
     }
   };
 
+  const insertVariable = (variable: string) => {
+    const textarea = adaptiveCardRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = formData.adaptive_card_template;
+    const before = text.substring(0, start);
+    const after = text.substring(end);
+    const newText = `${before}{{${variable}}}${after}`;
+    
+    setFormData({ ...formData, adaptive_card_template: newText });
+    setShowVariablePicker(false);
+    setShowMoreMenu(false);
+    
+    // Restore focus and cursor position
+    setTimeout(() => {
+      textarea.focus();
+      const newCursorPos = start + variable.length + 4; // {{}} is 4 chars
+      textarea.setSelectionRange(newCursorPos, newCursorPos);
+    }, 0);
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -588,6 +639,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
     <div className="max-w-5xl mx-auto space-y-6">
       <div className="flex items-center gap-4">
         <button 
+          type="button"
           onClick={() => navigate('/dashboard')}
           className="p-2 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-full transition-colors"
         >
@@ -602,7 +654,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
         {provider === 'clio' && (
           <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm">
             <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-4 flex items-center gap-2">
-              <img src="https://logo.clearbit.com/clio.com" alt="Clio" className="w-6 h-6" onError={(e) => (e.currentTarget.style.display = 'none')} />
+              <img src="/icons/icon-clio.png" alt="Clio" className="w-6 h-6 object-contain" />
               Connect to Clio
             </h3>
             <p className="text-sm text-slate-500">
@@ -673,6 +725,93 @@ export default function NotifierForm({ userId }: { userId: string }) {
           </div>
         )}
 
+        {provider === 'uservoice' && (
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm">
+            <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-4 flex items-center gap-2">
+              <img src="/icons/icon-uservoice.png" alt="UserVoice" className="w-6 h-6 object-contain" />
+              Connect to UserVoice
+            </h3>
+            <div className="space-y-4 text-sm text-slate-600">
+              <p>
+                UserVoice does not support automatic webhook creation. You must manually configure a Service Hook in your UserVoice Admin Console.
+              </p>
+              <ol className="list-decimal list-inside space-y-2 ml-2">
+                <li>Log in to your UserVoice Admin Console.</li>
+                <li>Go to <strong>Settings</strong> &gt; <strong>Integrations</strong>.</li>
+                <li>Select <strong>Service Hooks</strong>.</li>
+                <li>Click <strong>Add Service Hook</strong>.</li>
+                <li>Select the events you want to receive notifications for (e.g., New Suggestion, New Comment).</li>
+                <li>Copy the URL below and paste it into the <strong>URL</strong> field:</li>
+              </ol>
+              
+              <div className="flex items-center gap-2 mt-2">
+                <code className="flex-1 bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-sm text-slate-600 font-mono break-all">
+                  {appUrl ? `${appUrl}/api/webhook/${draftId}` : 'Loading URL...'}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (appUrl) {
+                      navigator.clipboard.writeText(`${appUrl}/api/webhook/${draftId}`);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }
+                  }}
+                  className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+                  title="Copy URL"
+                >
+                  {copied ? <Check className="w-5 h-5 text-emerald-500" /> : <Copy className="w-5 h-5" />}
+                </button>
+              </div>
+
+              <p className="mt-2">
+                <li>Click <strong>Add Service Hook</strong> to save.</li>
+              </p>
+            </div>
+          </div>
+        )}
+
+        {(provider === 'hootsuite' || provider === 'birdeye') && (
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm">
+            <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-4 flex items-center gap-2">
+              <img 
+                src={provider === 'hootsuite' ? "/icons/icon-hootsuite.png" : "/icons/icon-birdeye.png"} 
+                alt={provider === 'hootsuite' ? "Hootsuite" : "BirdEye"} 
+                className="w-6 h-6 object-contain" 
+              />
+              Connect to {provider === 'hootsuite' ? 'Hootsuite' : 'BirdEye'}
+            </h3>
+            <div className="space-y-4 text-sm text-slate-600">
+              <p>
+                Configuration for {provider === 'hootsuite' ? 'Hootsuite' : 'BirdEye'} is coming soon.
+              </p>
+              <p>
+                In the meantime, you can use the webhook URL below to manually configure notifications in your {provider === 'hootsuite' ? 'Hootsuite' : 'BirdEye'} dashboard if supported.
+              </p>
+              
+              <div className="flex items-center gap-2 mt-2">
+                <code className="flex-1 bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-sm text-slate-600 font-mono break-all">
+                  {appUrl ? `${appUrl}/api/webhook/${draftId}` : 'Loading URL...'}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (appUrl) {
+                      navigator.clipboard.writeText(`${appUrl}/api/webhook/${draftId}`);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }
+                  }}
+                  className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+                  title="Copy URL"
+                >
+                  {copied ? <Check className="w-5 h-5 text-emerald-500" /> : <Copy className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6 shadow-sm">
           <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-4">Basic Settings</h3>
           
@@ -715,6 +854,52 @@ export default function NotifierForm({ userId }: { userId: string }) {
           </div>
         </div>
 
+        {!isEditing && (
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800 flex flex-col md:flex-row items-center gap-4 justify-between shadow-sm">
+            <div className="flex items-center gap-3 flex-1">
+              <div className="bg-blue-100 p-2 rounded-lg">
+                <Code className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <p className="font-semibold">Send a test event to auto-populate</p>
+                <p className="text-xs text-blue-600 mt-1">Send a POST request with your JSON payload to this URL</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <div className="relative flex-1 md:w-96">
+                <input 
+                  type="text" 
+                  readOnly 
+                  value={appUrl ? `${appUrl}/api/webhook/${draftId}` : 'Loading...'}
+                  className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg font-mono text-xs text-slate-600 focus:outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (appUrl) {
+                    navigator.clipboard.writeText(`${appUrl}/api/webhook/${draftId}`);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }
+                }}
+                className="p-2 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 text-blue-600 transition-colors"
+                title="Copy to clipboard"
+              >
+                {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+              </button>
+            </div>
+            
+            {recentEvents.length > 0 && (
+              <div className="flex items-center gap-2 text-emerald-600 font-medium animate-pulse bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
+                <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
+                <span className="text-xs">New events received!</span>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm flex flex-col">
             <div className="flex justify-between items-center border-b border-slate-100 pb-4">
@@ -722,57 +907,25 @@ export default function NotifierForm({ userId }: { userId: string }) {
                 <Code className="w-5 h-5 text-slate-400" />
                 Sample Webhook Payload
               </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  fetchRecentEvents();
-                  setShowEventsModal(true);
-                }}
-                className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
-              >
-                <History className="w-3 h-3" />
-                Select from Past Events
-              </button>
+              {recentEvents.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    fetchRecentEvents();
+                    setShowEventsModal(true);
+                  }}
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+                >
+                  <History className="w-3 h-3" />
+                  Select from Past Events
+                </button>
+              )}
             </div>
             <p className="text-sm text-slate-500">
               Paste a sample JSON payload from your source application. This helps the AI generate a matching Adaptive Card.
             </p>
             
-            {!isEditing && (
-              <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 text-sm text-blue-800 flex flex-col gap-3">
-                <p className="font-semibold">Send a test event to this URL to auto-populate:</p>
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <input 
-                      type="text" 
-                      readOnly 
-                      value={appUrl ? `${appUrl}/api/webhook/${draftId}` : 'Loading...'}
-                      className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg font-mono text-xs text-slate-600 focus:outline-none"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (appUrl) {
-                        navigator.clipboard.writeText(`${appUrl}/api/webhook/${draftId}`);
-                        setCopied(true);
-                        setTimeout(() => setCopied(false), 2000);
-                      }
-                    }}
-                    className="p-2 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 text-blue-600 transition-colors"
-                    title="Copy to clipboard"
-                  >
-                    {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
-                  </button>
-                </div>
-                {recentEvents.length > 0 && (
-                  <div className="flex items-center gap-2 text-emerald-600 font-medium animate-pulse">
-                    <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-                    New events received! Click "Select from Past Events" to use.
-                  </div>
-                )}
-              </div>
-            )}
+
 
             <textarea
               value={formData.sample_payload}
@@ -780,15 +933,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
               className="w-full flex-1 min-h-[300px] p-4 bg-slate-50 border border-slate-200 rounded-lg font-mono text-sm text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-none"
               placeholder="Paste JSON here..."
             />
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={generating || !formData.sample_payload}
-              className="w-full flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-3 rounded-lg font-medium hover:bg-indigo-100 transition-colors disabled:opacity-50"
-            >
-              <Wand2 className="w-5 h-5" />
-              {generating ? 'Generating Magic...' : 'AI Magic: Generate Adaptive Card'}
-            </button>
+
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm flex flex-col">
@@ -797,28 +942,107 @@ export default function NotifierForm({ userId }: { userId: string }) {
                 <Code className="w-5 h-5 text-slate-400" />
                 Adaptive Card Template
               </h3>
-              <div className="flex items-center gap-2">
+              <div className="relative" ref={menuRef}>
                 <button
                   type="button"
-                  onClick={() => setShowPreview(true)}
-                  disabled={!formData.adaptive_card_template}
-                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1 disabled:opacity-50"
+                  onClick={() => {
+                    setShowMoreMenu(!showMoreMenu);
+                    setShowVariablePicker(false);
+                  }}
+                  className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
                 >
-                  <Eye className="w-3 h-3" />
-                  Preview Card
+                  <MoreVertical className="w-5 h-5" />
                 </button>
+
+                {showMoreMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-lg shadow-xl border border-slate-200 z-10 overflow-hidden">
+                    {showVariablePicker ? (
+                      <>
+                        <div className="flex items-center gap-2 p-2 border-b border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => setShowVariablePicker(false)}
+                            className="p-1 hover:bg-slate-100 rounded text-slate-500"
+                          >
+                            <ArrowLeft className="w-4 h-4" />
+                          </button>
+                          <span className="text-xs font-semibold text-slate-500">Select Variable</span>
+                        </div>
+                        <div className="max-h-60 overflow-y-auto p-1">
+                          {availableVariables.length > 0 ? (
+                            availableVariables.map(v => (
+                              <button
+                                key={v}
+                                type="button"
+                                onClick={() => insertVariable(v)}
+                                className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 rounded flex items-center gap-2"
+                              >
+                                <span className="font-mono text-slate-400">#</span>
+                                {v}
+                              </button>
+                            ))
+                          ) : (
+                            <div className="p-4 text-center text-xs text-slate-400">
+                              No variables found
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="p-1">
+                        <button
+                          type="button"
+                          onClick={() => setShowVariablePicker(true)}
+                          className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2"
+                        >
+                          <Hash className="w-4 h-4 text-slate-400" />
+                          Insert Variable
+                          <ChevronRight className="w-4 h-4 text-slate-400 ml-auto" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowPreview(true);
+                            setShowMoreMenu(false);
+                          }}
+                          disabled={!formData.adaptive_card_template}
+                          className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2 disabled:opacity-50"
+                        >
+                          <Eye className="w-4 h-4 text-slate-400" />
+                          Preview Card
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
             <p className="text-sm text-slate-500">
               Refine the generated Adaptive Card JSON. Use <code>{`{{key.subkey}}`}</code> syntax to inject values from the incoming webhook.
             </p>
-            <textarea
-              required
-              value={formData.adaptive_card_template}
-              onChange={e => setFormData({ ...formData, adaptive_card_template: e.target.value })}
-              className="w-full flex-1 min-h-[300px] p-4 bg-slate-900 border border-slate-800 rounded-lg font-mono text-sm text-emerald-400 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
-              placeholder="Adaptive Card JSON template..."
-            />
+            
+            <div className="relative flex-1 flex flex-col min-h-[300px]">
+              <textarea
+                ref={adaptiveCardRef}
+                required
+                value={formData.adaptive_card_template}
+                onChange={e => setFormData({ ...formData, adaptive_card_template: e.target.value })}
+                className="w-full flex-1 p-4 pb-12 bg-slate-900 border border-slate-800 rounded-lg font-mono text-sm text-emerald-400 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+                placeholder="Adaptive Card JSON template..."
+              />
+              
+              <div className="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none">
+                <button
+                  type="button"
+                  onClick={handleGenerate}
+                  disabled={generating || !formData.sample_payload}
+                  className="pointer-events-auto flex items-center gap-2 bg-indigo-600/80 backdrop-blur-md text-white px-4 py-2 rounded-full text-xs font-medium hover:bg-indigo-700/90 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
+                >
+                  <Wand2 className="w-3 h-3" />
+                  {generating ? 'Generating...' : 'Create adaptive card for me'}
+                </button>
+              </div>
+            </div>
             
             {testResult && (
               <div className={`p-4 rounded-lg border ${testResult.status === 'success' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>

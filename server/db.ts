@@ -43,6 +43,7 @@ class SQLiteAdapter implements IDatabase {
         provider TEXT DEFAULT 'custom',
         clio_model TEXT,
         clio_events TEXT,
+        clio_webhook_id TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id)
       );
@@ -101,6 +102,7 @@ class SQLiteAdapter implements IDatabase {
     try { this.db.exec("ALTER TABLE notifiers ADD COLUMN provider TEXT DEFAULT 'custom';"); } catch (e) {}
     try { this.db.exec("ALTER TABLE notifiers ADD COLUMN clio_model TEXT;"); } catch (e) {}
     try { this.db.exec("ALTER TABLE notifiers ADD COLUMN clio_events TEXT;"); } catch (e) {}
+    try { this.db.exec("ALTER TABLE notifiers ADD COLUMN clio_webhook_id TEXT;"); } catch (e) {}
     
     try {
       const tableExists = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='connectors'").get();
@@ -198,6 +200,7 @@ class PostgresAdapter implements IDatabase {
           provider TEXT DEFAULT 'custom',
           clio_model TEXT,
           clio_events TEXT,
+          clio_webhook_id TEXT,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY(user_id) REFERENCES users(id)
         );
@@ -271,6 +274,9 @@ class PostgresAdapter implements IDatabase {
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifiers' AND column_name='clio_events') THEN
               ALTER TABLE notifiers ADD COLUMN clio_events TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifiers' AND column_name='clio_webhook_id') THEN
+              ALTER TABLE notifiers ADD COLUMN clio_webhook_id TEXT;
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='logs' AND column_name='is_test') THEN
               ALTER TABLE logs ADD COLUMN is_test BOOLEAN DEFAULT FALSE;

@@ -41,6 +41,10 @@ For demonstration purposes, you can deploy as-is, but be aware that **all user d
     heroku config:set RC_CLIENT_SECRET="your_rc_client_secret"
     heroku config:set RC_SERVER_URL="https://platform.ringcentral.com" # or https://platform.devtest.ringcentral.com for sandbox
 
+    # Clio Configuration
+    heroku config:set CLIO_CLIENT_ID="your_clio_client_id"
+    heroku config:set CLIO_CLIENT_SECRET="your_clio_client_secret"
+
     # App Configuration
     heroku config:set APP_URL="https://your-app-name.herokuapp.com"
     heroku config:set NODE_ENV="production"

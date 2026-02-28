@@ -33,8 +33,8 @@ const RC_CLIENT_ID = process.env.RC_CLIENT_ID;
 const RC_CLIENT_SECRET = process.env.RC_CLIENT_SECRET;
 const RC_SERVER_URL = process.env.RC_SERVER_URL || 'https://platform.ringcentral.com';
 
-const CLIO_CLIENT_ID = process.env.CLIO_CLIENT_ID || 'RZDfpzQjTMNZxEIc3yNE6X2AFwm0YbNILuolfapQ';
-const CLIO_CLIENT_SECRET = process.env.CLIO_CLIENT_SECRET || 'X6XilAopB4Vn29Y21cQofVViDQxz9Qks6mG9UJAx';
+const CLIO_CLIENT_ID = process.env.CLIO_CLIENT_ID;
+const CLIO_CLIENT_SECRET = process.env.CLIO_CLIENT_SECRET;
 const CLIO_AUTH_URL = 'https://app.clio.com/oauth/authorize';
 const CLIO_TOKEN_URL = 'https://app.clio.com/oauth/token';
 const CLIO_API_URL = 'https://app.clio.com/api/v4';
@@ -574,6 +574,12 @@ app.post('/api/clio/webhook', async (req, res) => {
     }
 
     const data = await response.json();
+
+    // Save the Clio webhook ID
+    if (data.data && data.data.id) {
+      await db.run('UPDATE notifiers SET clio_webhook_id = ? WHERE id = ?', [data.data.id, notifierId]);
+    }
+
     res.json(data);
   } catch (error: any) {
     console.error('Failed to create Clio webhook:', error);
@@ -641,7 +647,38 @@ app.put('/api/notifiers/:id', async (req, res) => {
   const { id } = req.params;
 
   try {
+    // Fetch existing notifier to check for Clio webhook
+    const existingNotifier = await db.get('SELECT * FROM notifiers WHERE id = ? AND user_id = ?', [id, userId]);
+    if (!existingNotifier) return res.status(404).json({ error: 'Notifier not found' });
+
     const clioEventsStr = Array.isArray(clio_events) ? clio_events.join(',') : (clio_events || null);
+
+    // Update Clio webhook if needed
+    if (existingNotifier.clio_webhook_id) {
+      const modelChanged = clio_model && clio_model !== existingNotifier.clio_model;
+      const eventsChanged = clioEventsStr && clioEventsStr !== existingNotifier.clio_events;
+
+      if (modelChanged || eventsChanged) {
+        try {
+          console.log(`Updating Clio webhook ${existingNotifier.clio_webhook_id} for notifier ${id}`);
+          const webhookBody = {
+            data: {
+              model: clio_model || existingNotifier.clio_model,
+              events: Array.isArray(clio_events) ? clio_events : (clio_events ? clio_events.split(',') : existingNotifier.clio_events.split(',')),
+              url: existingNotifier.notification_url 
+            }
+          };
+          
+          await clioFetch(`/webhooks/${existingNotifier.clio_webhook_id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(webhookBody)
+          }, userId as string);
+        } catch (e) {
+          console.error('Failed to update Clio webhook:', e);
+        }
+      }
+    }
 
     await db.run(`
       UPDATE notifiers 
@@ -663,6 +700,18 @@ app.delete('/api/notifiers/:id', async (req, res) => {
 
   const { id } = req.params;
   try {
+    const notifier = await db.get('SELECT * FROM notifiers WHERE id = ? AND user_id = ?', [id, userId]);
+    if (!notifier) return res.status(404).json({ error: 'Notifier not found' });
+
+    if (notifier.clio_webhook_id) {
+      try {
+        console.log(`Deleting Clio webhook ${notifier.clio_webhook_id} for notifier ${id}`);
+        await clioFetch(`/webhooks/${notifier.clio_webhook_id}`, { method: 'DELETE' }, userId as string);
+      } catch (e) {
+        console.error('Failed to delete Clio webhook:', e);
+      }
+    }
+
     await db.run('DELETE FROM logs WHERE notifier_id = ?', [id]);
     await db.run('DELETE FROM notifiers WHERE id = ? AND user_id = ?', [id, userId]);
     

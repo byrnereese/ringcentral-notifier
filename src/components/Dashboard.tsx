@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Settings, Activity, Trash2, Copy, Check, Play, X } from 'lucide-react';
+import { Plus, Settings, Activity, Trash2, Copy, Check, Play, X, Briefcase, Share2, Eye, MessageSquare } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface Notifier {
@@ -12,10 +12,14 @@ interface Notifier {
   provider?: string;
 }
 
-const PROVIDER_ICONS: Record<string, string> = {
-  clio: 'https://logo.clearbit.com/clio.com',
-  hootsuite: 'https://logo.clearbit.com/hootsuite.com',
-  birdeye: 'https://logo.clearbit.com/birdeye.com',
+const ProviderIcon = ({ provider }: { provider?: string }) => {
+  switch (provider) {
+    case 'clio': return <Briefcase className="w-8 h-8 text-[#005CA5]" />;
+    case 'hootsuite': return <Share2 className="w-8 h-8 text-[#000000]" />;
+    case 'birdeye': return <Eye className="w-8 h-8 text-[#00A4E4]" />;
+    case 'uservoice': return <MessageSquare className="w-8 h-8 text-[#F26122]" />;
+    default: return <Settings className="w-6 h-6 text-slate-400" />;
+  }
 };
 
 export default function Dashboard({ userId }: { userId: string }) {
@@ -99,16 +103,7 @@ export default function Dashboard({ userId }: { userId: string }) {
             <div key={notifier.id} className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 rounded-lg bg-slate-50 flex items-center justify-center shrink-0">
-                  {notifier.provider && PROVIDER_ICONS[notifier.provider] ? (
-                    <img 
-                      src={PROVIDER_ICONS[notifier.provider]} 
-                      alt={notifier.provider} 
-                      className="w-8 h-8 object-contain"
-                      onError={(e) => (e.currentTarget.style.display = 'none')}
-                    />
-                  ) : (
-                    <Settings className="w-6 h-6 text-slate-400" />
-                  )}
+                  <ProviderIcon provider={notifier.provider} />
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">{notifier.name}</h3>
