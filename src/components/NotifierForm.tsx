@@ -18,7 +18,10 @@ export default function NotifierForm({ userId }: { userId: string }) {
     glip_webhook_url: '',
     sample_payload: '{\n  "event": "ticket_created",\n  "ticket": {\n    "id": "12345",\n    "title": "Server down",\n    "status": "open"\n  }\n}',
     adaptive_card_template: '',
-    team_name: ''
+    team_name: '',
+    filter_variable: '',
+    filter_operator: '',
+    filter_value: ''
   });
 
   const [loading, setLoading] = useState(false);
@@ -31,6 +34,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [showManualInput, setShowManualInput] = useState(false);
   const [manualWebhookUrl, setManualWebhookUrl] = useState('');
+  const [availableVariables, setAvailableVariables] = useState<string[]>([]);
 
   // New state for features
   const [showPreview, setShowPreview] = useState(false);
@@ -39,6 +43,38 @@ export default function NotifierForm({ userId }: { userId: string }) {
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [polling, setPolling] = useState(false);
   const [appUrl, setAppUrl] = useState<string>('');
+
+  // Extract variables from payload whenever it changes
+  useEffect(() => {
+    try {
+      if (!formData.sample_payload) {
+        setAvailableVariables([]);
+        return;
+      }
+      
+      const payload = JSON.parse(formData.sample_payload);
+      const vars: string[] = [];
+      
+      const extractKeys = (obj: any, prefix = '') => {
+        if (!obj || typeof obj !== 'object') return;
+        
+        Object.keys(obj).forEach(key => {
+          const path = prefix ? `${prefix}.${key}` : key;
+          vars.push(path);
+          
+          if (typeof obj[key] === 'object' && obj[key] !== null) {
+            extractKeys(obj[key], path);
+          }
+        });
+      };
+      
+      extractKeys(payload);
+      setAvailableVariables(vars.sort());
+    } catch (e) {
+      // Invalid JSON, just clear variables
+      setAvailableVariables([]);
+    }
+  }, [formData.sample_payload]);
 
   useEffect(() => {
     // Fetch app config to get the correct public URL
@@ -125,7 +161,10 @@ export default function NotifierForm({ userId }: { userId: string }) {
           glip_webhook_url: notifier.glip_webhook_url,
           sample_payload: notifier.sample_payload || '',
           adaptive_card_template: notifier.adaptive_card_template || '',
-          team_name: notifier.team_name || ''
+          team_name: notifier.team_name || '',
+          filter_variable: notifier.filter_variable || '',
+          filter_operator: notifier.filter_operator || '',
+          filter_value: notifier.filter_value || ''
         });
       }
     } catch (error) {
@@ -506,6 +545,60 @@ export default function NotifierForm({ userId }: { userId: string }) {
               className="w-full flex-1 min-h-[300px] p-4 bg-slate-900 border border-slate-800 rounded-lg font-mono text-sm text-emerald-400 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
               placeholder="Adaptive Card JSON template..."
             />
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6 shadow-sm">
+          <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-4">Filtering Rules (Optional)</h3>
+          <p className="text-sm text-slate-500">
+            Define a condition to filter out events. If the condition matches, the event will NOT be posted to RingCentral.
+          </p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">Variable</label>
+              <select
+                value={formData.filter_variable}
+                onChange={e => setFormData({ ...formData, filter_variable: e.target.value })}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-white"
+              >
+                <option value="">Select variable...</option>
+                {availableVariables.map(v => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-400">Variables extracted from sample payload</p>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">Operator</label>
+              <select
+                value={formData.filter_operator}
+                onChange={e => setFormData({ ...formData, filter_operator: e.target.value })}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all bg-white"
+              >
+                <option value="">Select operator...</option>
+                <option value="equals">Equals</option>
+                <option value="not_equals">Does not equal</option>
+                <option value="contains">Contains</option>
+                <option value="not_contains">Does not contain</option>
+                <option value="starts_with">Starts with</option>
+                <option value="ends_with">Ends with</option>
+                <option value="greater_than">Greater than</option>
+                <option value="less_than">Less than</option>
+              </select>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">Value</label>
+              <input
+                type="text"
+                value={formData.filter_value}
+                onChange={e => setFormData({ ...formData, filter_value: e.target.value })}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                placeholder="Value to compare against"
+              />
+            </div>
           </div>
         </div>
 

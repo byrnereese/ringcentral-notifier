@@ -37,6 +37,9 @@ class SQLiteAdapter implements IDatabase {
         adaptive_card_template TEXT,
         notification_url TEXT,
         team_name TEXT,
+        filter_variable TEXT,
+        filter_operator TEXT,
+        filter_value TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id)
       );
@@ -77,6 +80,9 @@ class SQLiteAdapter implements IDatabase {
     try { this.db.exec("ALTER TABLE logs ADD COLUMN is_test BOOLEAN DEFAULT 0;"); } catch (e) {}
     try { this.db.exec("ALTER TABLE logs ADD COLUMN outbound_request TEXT;"); } catch (e) {}
     try { this.db.exec("ALTER TABLE notifiers ADD COLUMN team_name TEXT;"); } catch (e) {}
+    try { this.db.exec("ALTER TABLE notifiers ADD COLUMN filter_variable TEXT;"); } catch (e) {}
+    try { this.db.exec("ALTER TABLE notifiers ADD COLUMN filter_operator TEXT;"); } catch (e) {}
+    try { this.db.exec("ALTER TABLE notifiers ADD COLUMN filter_value TEXT;"); } catch (e) {}
     
     try {
       const tableExists = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='connectors'").get();
@@ -168,6 +174,9 @@ class PostgresAdapter implements IDatabase {
           adaptive_card_template TEXT,
           notification_url TEXT,
           team_name TEXT,
+          filter_variable TEXT,
+          filter_operator TEXT,
+          filter_value TEXT,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY(user_id) REFERENCES users(id)
         );

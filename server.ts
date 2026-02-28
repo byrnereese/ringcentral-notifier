@@ -40,7 +40,8 @@ if (!RC_CLIENT_ID || !RC_CLIENT_SECRET) {
 }
 
 app.get('/api/auth/url', (req, res) => {
-  const redirectUri = `${process.env.APP_URL}/api/auth/callback`;
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  const redirectUri = `${appUrl}/api/auth/callback`;
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: RC_CLIENT_ID,
@@ -52,7 +53,8 @@ app.get('/api/auth/url', (req, res) => {
 
 app.get('/api/auth/callback', async (req, res) => {
   const { code, error, error_description } = req.query;
-  const redirectUri = `${process.env.APP_URL}/api/auth/callback`;
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  const redirectUri = `${appUrl}/api/auth/callback`;
 
   if (error) {
     return res.status(400).send(`
@@ -355,15 +357,15 @@ app.post('/api/notifiers', async (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-  const { id: providedId, name, glip_webhook_url, sample_payload, adaptive_card_template, team_name } = req.body;
+  const { id: providedId, name, glip_webhook_url, sample_payload, adaptive_card_template, team_name, filter_variable, filter_operator, filter_value } = req.body;
   const id = providedId || uuidv4();
   const notification_url = `${process.env.APP_URL}/api/webhook/${id}`;
 
   try {
     await db.run(`
-      INSERT INTO notifiers (id, user_id, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, userId, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name || null]);
+      INSERT INTO notifiers (id, user_id, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name, filter_variable, filter_operator, filter_value)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, userId, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name || null, filter_variable || null, filter_operator || null, filter_value || null]);
     
     // Clean up any temporary webhook events for this ID
     await db.run('DELETE FROM webhook_events WHERE public_id = ?', [id]);
@@ -380,15 +382,15 @@ app.put('/api/notifiers/:id', async (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-  const { name, glip_webhook_url, sample_payload, adaptive_card_template, team_name } = req.body;
+  const { name, glip_webhook_url, sample_payload, adaptive_card_template, team_name, filter_variable, filter_operator, filter_value } = req.body;
   const { id } = req.params;
 
   try {
     await db.run(`
       UPDATE notifiers 
-      SET name = ?, glip_webhook_url = ?, sample_payload = ?, adaptive_card_template = ?, team_name = ?
+      SET name = ?, glip_webhook_url = ?, sample_payload = ?, adaptive_card_template = ?, team_name = ?, filter_variable = ?, filter_operator = ?, filter_value = ?
       WHERE id = ? AND user_id = ?
-    `, [name, glip_webhook_url, sample_payload, adaptive_card_template, team_name || null, id, userId]);
+    `, [name, glip_webhook_url, sample_payload, adaptive_card_template, team_name || null, filter_variable || null, filter_operator || null, filter_value || null, id, userId]);
     
     const notifier = await db.get('SELECT * FROM notifiers WHERE id = ?', [id]);
     res.json(notifier);
@@ -467,10 +469,24 @@ app.post('/api/generate-card', async (req, res) => {
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `
 You are an expert at creating Microsoft Adaptive Cards for RingCentral Team Messaging.
-Given the following sample JSON payload from an incoming webhook, generate a valid Adaptive Card JSON template.
-Use {{key}} syntax to inject values from the payload. For example, if the payload has {"user": {"name": "John"}}, use {{user.name}} in the Adaptive Card.
+Your goal is to create a TEMPLATE, not a static card.
 
-Sample Payload:
+CRITICAL INSTRUCTION:
+You MUST replace specific values from the sample payload with their corresponding {{variable}} tokens.
+Do NOT hardcode values from the sample payload into the card.
+
+Example:
+If the payload is: {"ticket": {"title": "Server Down", "id": 123}}
+You MUST generate:
+{
+  "type": "AdaptiveCard",
+  "body": [
+    { "type": "TextBlock", "text": "Ticket: {{ticket.title}}" },
+    { "type": "FactSet", "facts": [{ "title": "ID", "value": "{{ticket.id}}" }] }
+  ]
+}
+
+Sample Payload to tokenize:
 ${sample_payload}
 
 Return ONLY the raw JSON for the Adaptive Card. Do not include markdown formatting like \`\`\`json.
@@ -562,6 +578,79 @@ app.post('/api/webhook/:notifierId', async (req, res) => {
   let status = 'success';
 
   try {
+    // Check filter condition
+    if (notifier.filter_variable && notifier.filter_operator && notifier.filter_value) {
+      const keys = notifier.filter_variable.split('.');
+      let value: any = inboundPayload;
+      for (const key of keys) {
+        if (value && typeof value === 'object' && key in value) {
+          value = value[key];
+        } else {
+          value = undefined;
+          break;
+        }
+      }
+      
+      const filterValue = notifier.filter_value;
+      let isMatch = false;
+      
+      // Basic type coercion for comparison
+      const compareValue = String(value);
+      
+      switch (notifier.filter_operator) {
+        case 'equals':
+          isMatch = compareValue === filterValue;
+          break;
+        case 'not_equals':
+          isMatch = compareValue !== filterValue;
+          break;
+        case 'contains':
+          isMatch = compareValue.includes(filterValue);
+          break;
+        case 'not_contains':
+          isMatch = !compareValue.includes(filterValue);
+          break;
+        case 'starts_with':
+          isMatch = compareValue.startsWith(filterValue);
+          break;
+        case 'ends_with':
+          isMatch = compareValue.endsWith(filterValue);
+          break;
+        case 'greater_than':
+          isMatch = Number(value) > Number(filterValue);
+          break;
+        case 'less_than':
+          isMatch = Number(value) < Number(filterValue);
+          break;
+      }
+      
+      if (isMatch) {
+        console.log(`[Webhook ${traceId}] Filter matched. Skipping notification.`);
+        
+        // Log the filtered event
+        const logId = uuidv4();
+        await db.run(`
+          INSERT INTO logs (id, notifier_id, status, inbound_request, generated_card, outbound_request, outbound_response, is_test)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          logId, 
+          notifierId, 
+          'filtered', 
+          JSON.stringify({ headers: req.headers, body: inboundPayload, traceId }), 
+          '', 
+          '',
+          `Filtered by rule: ${notifier.filter_variable} ${notifier.filter_operator} ${notifier.filter_value}`,
+          isTest
+        ]);
+        
+        return res.status(200).json({
+          status: 'filtered',
+          message: 'Event filtered by rule',
+          traceId
+        });
+      }
+    }
+
     // Simple template injection replacing {{key.subkey}} with values from inboundPayload
     let templateStr = notifier.adaptive_card_template;
     

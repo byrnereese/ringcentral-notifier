@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Activity, CheckCircle2, XCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowLeft, Activity, CheckCircle2, XCircle, ChevronDown, ChevronUp, Filter } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface Log {
@@ -43,7 +43,7 @@ export default function NotifierHistory({ userId }: { userId: string }) {
   };
 
   const getErrorMessage = (log: Log) => {
-    if (log.status === 'success') return null;
+    if (log.status === 'success' || log.status === 'filtered') return null;
     try {
       const parsed = JSON.parse(log.outbound_response);
       return parsed.message || parsed.error_description || parsed.error || 'Unknown error occurred';
@@ -92,13 +92,17 @@ export default function NotifierHistory({ userId }: { userId: string }) {
                   <div className="flex items-center gap-4">
                     {log.status === 'success' ? (
                       <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                    ) : log.status === 'filtered' ? (
+                      <Filter className="w-6 h-6 text-amber-500" />
                     ) : (
                       <XCircle className="w-6 h-6 text-red-500" />
                     )}
                     <div>
                       <div className="flex items-center gap-2">
                         <h4 className="font-medium text-slate-900">
-                          {log.status === 'success' ? 'Webhook Processed Successfully' : 'Webhook Processing Failed'}
+                          {log.status === 'success' ? 'Webhook Processed Successfully' : 
+                           log.status === 'filtered' ? 'Webhook Filtered (Skipped)' : 
+                           'Webhook Processing Failed'}
                         </h4>
                         {log.is_test === 1 && (
                           <span className="px-2 py-0.5 rounded text-xs font-semibold bg-indigo-100 text-indigo-700">
@@ -127,6 +131,15 @@ export default function NotifierHistory({ userId }: { userId: string }) {
                         </div>
                       </div>
                     )}
+                    {log.status === 'filtered' && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+                        <Filter className="w-5 h-5 text-amber-500 mt-0.5" />
+                        <div>
+                          <h5 className="text-sm font-semibold text-amber-900">Event Filtered</h5>
+                          <p className="text-sm text-amber-700 mt-1">{log.outbound_response}</p>
+                        </div>
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <h5 className="text-sm font-semibold text-slate-700 uppercase tracking-wider">Inbound Request</h5>
@@ -137,7 +150,7 @@ export default function NotifierHistory({ userId }: { userId: string }) {
                     <div className="space-y-2">
                       <h5 className="text-sm font-semibold text-slate-700 uppercase tracking-wider">Generated Adaptive Card</h5>
                       <pre className="bg-slate-900 text-emerald-400 p-4 rounded-lg text-xs font-mono overflow-auto max-h-64 border border-slate-800">
-                        {log.generated_card ? JSON.stringify(JSON.parse(log.generated_card), null, 2) : 'N/A'}
+                        {log.generated_card ? JSON.stringify(JSON.parse(log.generated_card), null, 2) : 'N/A (Filtered)'}
                       </pre>
                     </div>
                   </div>
@@ -150,12 +163,14 @@ export default function NotifierHistory({ userId }: { userId: string }) {
                         </pre>
                       </div>
                     )}
-                    <div className="space-y-2">
-                      <h5 className="text-sm font-semibold text-slate-700 uppercase tracking-wider">Outbound Response (From RingCentral)</h5>
-                      <pre className={`p-4 rounded-lg text-xs font-mono overflow-auto max-h-48 border ${log.status === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-red-50 text-red-800 border-red-200'}`}>
-                        {log.outbound_response}
-                      </pre>
-                    </div>
+                    {log.status !== 'filtered' && (
+                      <div className="space-y-2">
+                        <h5 className="text-sm font-semibold text-slate-700 uppercase tracking-wider">Outbound Response (From RingCentral)</h5>
+                        <pre className={`p-4 rounded-lg text-xs font-mono overflow-auto max-h-48 border ${log.status === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-red-50 text-red-800 border-red-200'}`}>
+                          {log.outbound_response}
+                        </pre>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
