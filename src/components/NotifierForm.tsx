@@ -41,21 +41,21 @@ export default function NotifierForm({ userId }: { userId: string }) {
     filter_variable: '',
     filter_operator: '',
     filter_value: '',
-    clio_model: 'Matter',
+    clio_model: 'matter',
     clio_events: ['created', 'updated']
   });
 
   const CLIO_MODELS = [
-    { value: 'Activity', label: 'Activity' },
-    { value: 'Bill', label: 'Bill' },
-    { value: 'CalendarEntry', label: 'Calendar Entry' },
-    { value: 'ClioPaymentsPayment', label: 'Clio Payment' },
-    { value: 'Communication', label: 'Communication' },
-    { value: 'Contact', label: 'Contact' },
-    { value: 'Document', label: 'Document' },
-    { value: 'Folder', label: 'Folder' },
-    { value: 'Matter', label: 'Matter' },
-    { value: 'Task', label: 'Task' }
+    { value: 'activity', label: 'Activity' },
+    { value: 'bill', label: 'Bill' },
+    { value: 'calendar_entry', label: 'Calendar Entry' },
+    { value: 'clio_payments_payment', label: 'Clio Payment' },
+    { value: 'communication', label: 'Communication' },
+    { value: 'contact', label: 'Contact' },
+    { value: 'document', label: 'Document' },
+    { value: 'folder', label: 'Folder' },
+    { value: 'matter', label: 'Matter' },
+    { value: 'task', label: 'Task' }
   ];
 
   const CLIO_EVENTS = [

@@ -551,7 +551,7 @@ app.post('/api/clio/webhook', async (req, res) => {
     const notifier = await db.get('SELECT * FROM notifiers WHERE id = ?', [notifierId]);
     if (!notifier) return res.status(404).json({ error: 'Notifier not found' });
 
-    const model = notifier.clio_model || 'Matter';
+    const model = notifier.clio_model || 'matter';
     const events = notifier.clio_events ? notifier.clio_events.split(',') : ['created', 'updated'];
 
     // Create webhook in Clio
@@ -598,11 +598,13 @@ app.post('/api/notifiers', async (req, res) => {
   const userId = req.headers['x-user-id'];
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-  const { id: providedId, name, glip_webhook_url, sample_payload, adaptive_card_template, team_name, filter_variable, filter_operator, filter_value } = req.body;
+  const { id: providedId, name, glip_webhook_url, sample_payload, adaptive_card_template, team_name, filter_variable, filter_operator, filter_value, provider, clio_model, clio_events } = req.body;
   const id = providedId || uuidv4();
   const notification_url = `${process.env.APP_URL}/api/webhook/${id}`;
 
   try {
+    const clioEventsStr = Array.isArray(clio_events) ? clio_events.join(',') : (clio_events || null);
+
     await db.run(`
       INSERT INTO notifiers (id, user_id, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name, filter_variable, filter_operator, filter_value, provider, clio_model, clio_events)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -618,7 +620,7 @@ app.post('/api/notifiers', async (req, res) => {
         provider = excluded.provider,
         clio_model = excluded.clio_model,
         clio_events = excluded.clio_events
-    `, [id, userId, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name || null, filter_variable || null, filter_operator || null, filter_value || null, req.body.provider || 'custom', req.body.clio_model || null, req.body.clio_events || null]);
+    `, [id, userId, name, glip_webhook_url, sample_payload, adaptive_card_template, notification_url, team_name || null, filter_variable || null, filter_operator || null, filter_value || null, provider || 'custom', clio_model || null, clioEventsStr]);
     
     // Clean up any temporary webhook events for this ID
     await db.run('DELETE FROM webhook_events WHERE public_id = ?', [id]);
@@ -639,11 +641,13 @@ app.put('/api/notifiers/:id', async (req, res) => {
   const { id } = req.params;
 
   try {
+    const clioEventsStr = Array.isArray(clio_events) ? clio_events.join(',') : (clio_events || null);
+
     await db.run(`
       UPDATE notifiers 
       SET name = ?, glip_webhook_url = ?, sample_payload = ?, adaptive_card_template = ?, team_name = ?, filter_variable = ?, filter_operator = ?, filter_value = ?, clio_model = ?, clio_events = ?
       WHERE id = ? AND user_id = ?
-    `, [name, glip_webhook_url, sample_payload, adaptive_card_template, team_name || null, filter_variable || null, filter_operator || null, filter_value || null, clio_model || null, clio_events || null, id, userId]);
+    `, [name, glip_webhook_url, sample_payload, adaptive_card_template, team_name || null, filter_variable || null, filter_operator || null, filter_value || null, clio_model || null, clioEventsStr, id, userId]);
     
     const notifier = await db.get('SELECT * FROM notifiers WHERE id = ?', [id]);
     res.json(notifier);
