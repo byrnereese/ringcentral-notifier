@@ -602,7 +602,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
         {provider === 'clio' && (
           <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm">
             <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-4 flex items-center gap-2">
-              <img src="https://cdn.worldvectorlogo.com/logos/clio-1.svg" alt="Clio" className="w-6 h-6" onError={(e) => (e.currentTarget.style.display = 'none')} />
+              <img src="https://logo.clearbit.com/clio.com" alt="Clio" className="w-6 h-6" onError={(e) => (e.currentTarget.style.display = 'none')} />
               Connect to Clio
             </h3>
             <p className="text-sm text-slate-500">

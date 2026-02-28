@@ -9,7 +9,14 @@ interface Notifier {
   notification_url: string;
   created_at: string;
   sample_payload?: string;
+  provider?: string;
 }
+
+const PROVIDER_ICONS: Record<string, string> = {
+  clio: 'https://logo.clearbit.com/clio.com',
+  hootsuite: 'https://logo.clearbit.com/hootsuite.com',
+  birdeye: 'https://logo.clearbit.com/birdeye.com',
+};
 
 export default function Dashboard({ userId }: { userId: string }) {
   const [notifiers, setNotifiers] = useState<Notifier[]>([]);
@@ -90,11 +97,25 @@ export default function Dashboard({ userId }: { userId: string }) {
         <div className="grid gap-4">
           {notifiers.map(notifier => (
             <div key={notifier.id} className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm hover:shadow-md transition-shadow">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">{notifier.name}</h3>
-                <p className="text-sm text-slate-500 mt-1">
-                  Created {formatDistanceToNow(new Date(notifier.created_at))} ago
-                </p>
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-lg bg-slate-50 flex items-center justify-center shrink-0">
+                  {notifier.provider && PROVIDER_ICONS[notifier.provider] ? (
+                    <img 
+                      src={PROVIDER_ICONS[notifier.provider]} 
+                      alt={notifier.provider} 
+                      className="w-8 h-8 object-contain"
+                      onError={(e) => (e.currentTarget.style.display = 'none')}
+                    />
+                  ) : (
+                    <Settings className="w-6 h-6 text-slate-400" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">{notifier.name}</h3>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Created {formatDistanceToNow(new Date(notifier.created_at))} ago
+                  </p>
+                </div>
               </div>
               
               <div className="flex-1 max-w-lg">

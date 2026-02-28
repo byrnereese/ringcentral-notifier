@@ -16,14 +16,14 @@ const NOTIFIER_TYPES: NotifierType[] = [
     id: 'clio',
     name: 'Clio',
     description: 'Connect to Clio Manage to receive notifications about Matters, Contacts, and more.',
-    icon: 'https://cdn.worldvectorlogo.com/logos/clio-1.svg', // Placeholder or use text
+    icon: 'https://logo.clearbit.com/clio.com',
     enabled: true
   },
   {
     id: 'hootsuite',
     name: 'Hootsuite',
     description: 'Receive updates from your social media channels.',
-    icon: '',
+    icon: 'https://logo.clearbit.com/hootsuite.com',
     enabled: false,
     comingSoon: true
   },
@@ -31,7 +31,7 @@ const NOTIFIER_TYPES: NotifierType[] = [
     id: 'birdeye',
     name: 'BirdEye',
     description: 'Get notified about new reviews and customer feedback.',
-    icon: '',
+    icon: 'https://logo.clearbit.com/birdeye.com',
     enabled: false,
     comingSoon: true
   },
