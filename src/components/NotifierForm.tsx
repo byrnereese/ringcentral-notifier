@@ -1,6 +1,6 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Wand2, Save, ArrowLeft, Code, MessageSquare, X, Loader2, Search, Link as LinkIcon, User, Eye, History, RefreshCw, Copy, Check } from 'lucide-react';
+import { Wand2, Save, ArrowLeft, Code, MessageSquare, X, Loader2, Search, Link as LinkIcon, User, Eye, History, RefreshCw, Copy, Check, Play } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import CardPreview from './CardPreview';
 
@@ -26,6 +26,8 @@ export default function NotifierForm({ userId }: { userId: string }) {
 
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ status: 'success' | 'error', message: string, response?: string, request?: string } | null>(null);
   
   const [showTeamModal, setShowTeamModal] = useState(false);
   const [teams, setTeams] = useState<any[]>([]);
@@ -350,6 +352,91 @@ export default function NotifierForm({ userId }: { userId: string }) {
     }
   };
 
+  const handleTest = async () => {
+    if (!formData.glip_webhook_url || !formData.sample_payload || !formData.adaptive_card_template) {
+      alert('Please fill in all fields before testing.');
+      return;
+    }
+
+    setTesting(true);
+    setTestResult(null);
+
+    try {
+      // 1. Save the notifier first (upsert)
+      const url = isEditing ? `/api/notifiers/${id}` : '/api/notifiers';
+      const method = isEditing ? 'PUT' : 'POST';
+      
+      const payload = {
+        ...formData,
+        ...(isEditing ? {} : { id: draftId })
+      };
+
+      const saveRes = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': userId
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!saveRes.ok) {
+        throw new Error('Failed to save notifier configuration before testing');
+      }
+
+      // 2. Send the test webhook
+      const targetId = isEditing ? id : draftId;
+      // Use the local API route, not the full appUrl to avoid CORS/network issues if appUrl is misconfigured
+      const res = await fetch(`/api/webhook/${targetId}?test=true`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: formData.sample_payload
+      });
+      
+      const text = await res.text();
+      let responseData: any = { response: text };
+      try {
+        responseData = JSON.parse(text);
+      } catch (e) {}
+      
+      let isError = !res.ok;
+      if (res.ok && responseData.response) {
+        try {
+          const rcJson = JSON.parse(responseData.response);
+          if (rcJson.status === 'Error' || rcJson.status === 'error' || rcJson.error) {
+            isError = true;
+          }
+        } catch (e) {
+          // Ignore
+        }
+      }
+
+      if (!isError) {
+        setTestResult({ 
+          status: 'success', 
+          message: 'Test payload sent successfully!', 
+          response: responseData.response,
+          request: responseData.request ? JSON.stringify(responseData.request, null, 2) : undefined
+        });
+      } else {
+        setTestResult({ 
+          status: 'error', 
+          message: 'Test failed', 
+          response: responseData.response || text,
+          request: responseData.request ? JSON.stringify(responseData.request, null, 2) : undefined
+        });
+      }
+
+    } catch (error: any) {
+      console.error('Test failed', error);
+      setTestResult({ status: 'error', message: 'Test failed: ' + error.message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -525,15 +612,17 @@ export default function NotifierForm({ userId }: { userId: string }) {
                 <Code className="w-5 h-5 text-slate-400" />
                 Adaptive Card Template
               </h3>
-              <button
-                type="button"
-                onClick={() => setShowPreview(true)}
-                disabled={!formData.adaptive_card_template}
-                className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1 disabled:opacity-50"
-              >
-                <Eye className="w-3 h-3" />
-                Preview Card
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPreview(true)}
+                  disabled={!formData.adaptive_card_template}
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700 flex items-center gap-1 disabled:opacity-50"
+                >
+                  <Eye className="w-3 h-3" />
+                  Preview Card
+                </button>
+              </div>
             </div>
             <p className="text-sm text-slate-500">
               Refine the generated Adaptive Card JSON. Use <code>{`{{key.subkey}}`}</code> syntax to inject values from the incoming webhook.
@@ -545,6 +634,41 @@ export default function NotifierForm({ userId }: { userId: string }) {
               className="w-full flex-1 min-h-[300px] p-4 bg-slate-900 border border-slate-800 rounded-lg font-mono text-sm text-emerald-400 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
               placeholder="Adaptive Card JSON template..."
             />
+            
+            {testResult && (
+              <div className={`p-4 rounded-lg border ${testResult.status === 'success' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                <div className="flex justify-between items-start">
+                  <h4 className={`font-semibold ${testResult.status === 'success' ? 'text-emerald-900' : 'text-red-900'}`}>
+                    {testResult.message}
+                  </h4>
+                  <button 
+                    type="button"
+                    onClick={() => setTestResult(null)}
+                    className={`p-1 rounded hover:bg-black/5 ${testResult.status === 'success' ? 'text-emerald-700' : 'text-red-700'}`}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-4 mt-3">
+                  {testResult.request && (
+                    <div>
+                      <h5 className={`text-xs font-semibold uppercase tracking-wider mb-1 ${testResult.status === 'success' ? 'text-emerald-700' : 'text-red-700'}`}>Outbound Request</h5>
+                      <pre className={`p-2 rounded text-xs font-mono overflow-auto max-h-48 ${testResult.status === 'success' ? 'bg-emerald-100/50 text-emerald-800 border border-emerald-200' : 'bg-red-100/50 text-red-800 border border-red-200'}`}>
+                        {testResult.request}
+                      </pre>
+                    </div>
+                  )}
+                  {testResult.response && (
+                    <div>
+                      <h5 className={`text-xs font-semibold uppercase tracking-wider mb-1 ${testResult.status === 'success' ? 'text-emerald-700' : 'text-red-700'}`}>RingCentral Response</h5>
+                      <pre className={`p-2 rounded text-xs font-mono overflow-auto max-h-48 ${testResult.status === 'success' ? 'bg-emerald-100/50 text-emerald-800 border border-emerald-200' : 'bg-red-100/50 text-red-800 border border-red-200'}`}>
+                        {testResult.response}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -602,7 +726,17 @@ export default function NotifierForm({ userId }: { userId: string }) {
           </div>
         </div>
 
-        <div className="flex justify-end pt-4">
+        <div className="flex justify-end pt-4 gap-3">
+          <button
+            type="button"
+            onClick={handleTest}
+            disabled={testing || !formData.adaptive_card_template || !formData.sample_payload}
+            className="flex items-center gap-2 bg-white text-slate-700 border border-slate-300 px-6 py-3 rounded-lg font-medium hover:bg-slate-50 hover:text-slate-900 transition-colors disabled:opacity-50 shadow-sm"
+            title="Save and send a test webhook"
+          >
+            <Play className="w-5 h-5" />
+            {testing ? 'Sending...' : 'Send Test'}
+          </button>
           <button
             type="submit"
             disabled={loading || !formData.glip_webhook_url}
