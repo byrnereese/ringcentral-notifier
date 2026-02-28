@@ -4,6 +4,7 @@ import LandingPage from './components/LandingPage';
 import Dashboard from './components/Dashboard';
 import NotifierForm from './components/NotifierForm';
 import NotifierHistory from './components/NotifierHistory';
+import NotifierSelection from './components/NotifierSelection';
 
 export default function App() {
   const [userId, setUserId] = useState<string | null>(localStorage.getItem('userId'));
@@ -42,6 +43,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={userId ? <Navigate to="/dashboard" /> : <LandingPage />} />
             <Route path="/dashboard" element={userId ? <Dashboard userId={userId} /> : <Navigate to="/" />} />
+            <Route path="/notifiers/select" element={userId ? <NotifierSelection /> : <Navigate to="/" />} />
             <Route path="/notifiers/new" element={userId ? <NotifierForm userId={userId} /> : <Navigate to="/" />} />
             <Route path="/notifiers/:id/edit" element={userId ? <NotifierForm userId={userId} /> : <Navigate to="/" />} />
             <Route path="/notifiers/:id/history" element={userId ? <NotifierHistory userId={userId} /> : <Navigate to="/" />} />

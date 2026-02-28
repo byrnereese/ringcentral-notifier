@@ -1,5 +1,5 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Wand2, Save, ArrowLeft, Code, MessageSquare, X, Loader2, Search, Link as LinkIcon, User, Eye, History, RefreshCw, Copy, Check, Play, ChevronDown, ChevronRight } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import CardPreview from './CardPreview';
@@ -9,14 +9,33 @@ export default function NotifierForm({ userId }: { userId: string }) {
   const navigate = useNavigate();
   const isEditing = !!id;
   
+  // Get provider from URL query params
+  const [searchParams] = useSearchParams();
+  const provider = searchParams.get('provider') || 'custom';
+  
   // Generate a draft ID for new notifiers so we can show the webhook URL immediately
   const [draftId] = useState(() => isEditing ? id : uuidv4());
   const [copied, setCopied] = useState(false);
 
   const [formData, setFormData] = useState({
-    name: '',
+    name: provider === 'clio' ? 'Clio Notifier' : '',
     glip_webhook_url: '',
-    sample_payload: '{\n  "event": "ticket_created",\n  "ticket": {\n    "id": "12345",\n    "title": "Server down",\n    "status": "open"\n  }\n}',
+    sample_payload: provider === 'clio' ? JSON.stringify({
+      "data": {
+        "id": 123456,
+        "display_number": "M-00001",
+        "description": "Estate Planning for John Doe",
+        "status": "Open",
+        "client": {
+          "id": 789,
+          "name": "John Doe"
+        }
+      },
+      "meta": {
+        "event": "Matter created",
+        "timestamp": "2023-01-01T12:00:00Z"
+      }
+    }, null, 2) : '{\n  "event": "ticket_created",\n  "ticket": {\n    "id": "12345",\n    "title": "Server down",\n    "status": "open"\n  }\n}',
     adaptive_card_template: '',
     team_name: '',
     filter_variable: '',
@@ -46,6 +65,44 @@ export default function NotifierForm({ userId }: { userId: string }) {
   const [polling, setPolling] = useState(false);
   const [appUrl, setAppUrl] = useState<string>('');
   const [isFilteringExpanded, setIsFilteringExpanded] = useState(false);
+  
+  // Clio specific state
+  const [clioConnected, setClioConnected] = useState(false);
+  const [connectingClio, setConnectingClio] = useState(false);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'CLIO_AUTH_SUCCESS') {
+        setClioConnected(true);
+        setConnectingClio(false);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  const handleConnectClio = async () => {
+    setConnectingClio(true);
+    try {
+      const res = await fetch(`/api/auth/clio/url?userId=${userId}`);
+      const data = await res.json();
+      
+      const width = 600;
+      const height = 700;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+      
+      window.open(
+        data.url,
+        'Clio Auth',
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+    } catch (error) {
+      console.error('Failed to get Clio auth URL', error);
+      setConnectingClio(false);
+      alert('Failed to start Clio connection');
+    }
+  };
 
   // Extract variables from payload whenever it changes
   useEffect(() => {
@@ -465,6 +522,31 @@ export default function NotifierForm({ userId }: { userId: string }) {
       });
 
       if (res.ok) {
+        const savedNotifier = await res.json();
+        
+        // If provider is Clio, create the webhook in Clio
+        if (provider === 'clio' && !isEditing) {
+          try {
+            const clioRes = await fetch('/api/clio/webhook', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-user-id': userId
+              },
+              body: JSON.stringify({ notifierId: savedNotifier.id })
+            });
+            
+            if (!clioRes.ok) {
+              const err = await clioRes.json();
+              console.error('Failed to create Clio webhook', err);
+              alert(`Notifier saved, but failed to create webhook in Clio: ${err.error}`);
+            }
+          } catch (e) {
+            console.error('Failed to create Clio webhook', e);
+            alert('Notifier saved, but failed to create webhook in Clio.');
+          }
+        }
+
         navigate('/dashboard');
       } else {
         const data = await res.json();
@@ -493,6 +575,37 @@ export default function NotifierForm({ userId }: { userId: string }) {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-8">
+        {provider === 'clio' && (
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm">
+            <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-4 flex items-center gap-2">
+              <img src="https://cdn.worldvectorlogo.com/logos/clio-1.svg" alt="Clio" className="w-6 h-6" onError={(e) => (e.currentTarget.style.display = 'none')} />
+              Connect to Clio
+            </h3>
+            <p className="text-sm text-slate-500">
+              Connect your Clio Manage account to automatically receive notifications about Matter updates.
+            </p>
+            
+            <div className="flex items-center gap-4">
+              {clioConnected ? (
+                <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200">
+                  <Check className="w-5 h-5" />
+                  <span className="font-medium">Connected to Clio</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleConnectClio}
+                  disabled={connectingClio}
+                  className="bg-[#005CA5] text-white px-6 py-2.5 rounded-lg font-medium hover:bg-[#004d8a] transition-colors flex items-center gap-2 disabled:opacity-70"
+                >
+                  {connectingClio ? <Loader2 className="w-4 h-4 animate-spin" /> : <LinkIcon className="w-4 h-4" />}
+                  Connect Clio Account
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6 shadow-sm">
           <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-4">Basic Settings</h3>
           
@@ -759,7 +872,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
           </button>
           <button
             type="submit"
-            disabled={loading || !formData.glip_webhook_url}
+            disabled={loading || !formData.glip_webhook_url || (provider === 'clio' && !clioConnected)}
             className="flex items-center gap-2 bg-indigo-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-70 shadow-sm"
           >
             <Save className="w-5 h-5" />

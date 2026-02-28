@@ -33,11 +33,207 @@ const RC_CLIENT_ID = process.env.RC_CLIENT_ID;
 const RC_CLIENT_SECRET = process.env.RC_CLIENT_SECRET;
 const RC_SERVER_URL = process.env.RC_SERVER_URL || 'https://platform.ringcentral.com';
 
+const CLIO_CLIENT_ID = process.env.CLIO_CLIENT_ID || 'RZDfpzQjTMNZxEIc3yNE6X2AFwm0YbNILuolfapQ';
+const CLIO_CLIENT_SECRET = process.env.CLIO_CLIENT_SECRET || 'X6XilAopB4Vn29Y21cQofVViDQxz9Qks6mG9UJAx';
+const CLIO_AUTH_URL = 'https://app.clio.com/oauth/authorize';
+const CLIO_TOKEN_URL = 'https://app.clio.com/oauth/token';
+const CLIO_API_URL = 'https://app.clio.com/api/v4';
+
 if (!RC_CLIENT_ID || !RC_CLIENT_SECRET) {
   console.error('Missing RC_CLIENT_ID or RC_CLIENT_SECRET environment variables');
   // We don't throw here to allow the server to start for health checks, 
   // but auth routes will fail.
 }
+
+// Helper to refresh Clio token
+async function refreshClioToken(userId: string, refreshToken: string) {
+  try {
+    const response = await fetch(CLIO_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: CLIO_CLIENT_ID,
+        client_secret: CLIO_CLIENT_SECRET,
+        refresh_token: refreshToken
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to refresh Clio token');
+    }
+
+    const data = await response.json();
+    const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
+
+    await db.run(`
+      UPDATE service_connections 
+      SET access_token = ?, refresh_token = ?, expires_at = ?
+      WHERE user_id = ? AND provider = 'clio'
+    `, [data.access_token, data.refresh_token, expiresAt, userId]);
+
+    return data.access_token;
+  } catch (error) {
+    console.error('Error refreshing Clio token:', error);
+    throw error;
+  }
+}
+
+// Helper to make authenticated Clio API calls
+async function clioFetch(url: string, options: any, userId: string) {
+  const connection = await db.get('SELECT * FROM service_connections WHERE user_id = ? AND provider = ?', [userId, 'clio']);
+  if (!connection) throw new Error('Clio connection not found');
+
+  let accessToken = connection.access_token;
+
+  // Check if token is expired or about to expire (within 5 mins)
+  if (new Date(connection.expires_at).getTime() - Date.now() < 5 * 60 * 1000) {
+    accessToken = await refreshClioToken(userId, connection.refresh_token);
+  }
+
+  let res = await fetch(`${CLIO_API_URL}${url}`, {
+    ...options,
+    headers: {
+      ...options.headers,
+      'Authorization': `Bearer ${accessToken}`
+    }
+  });
+
+  if (res.status === 401) {
+    // Try one more refresh if 401
+    accessToken = await refreshClioToken(userId, connection.refresh_token);
+    res = await fetch(`${CLIO_API_URL}${url}`, {
+      ...options,
+      headers: {
+        ...options.headers,
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+  }
+
+  return res;
+}
+
+app.get('/api/auth/clio/url', (req, res) => {
+  const userId = req.query.userId as string;
+  if (!userId) {
+    return res.status(400).json({ error: 'Missing userId' });
+  }
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  const redirectUri = `${appUrl}/api/auth/clio/callback`;
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: CLIO_CLIENT_ID,
+    redirect_uri: redirectUri,
+    state: userId, // Passing userId as state for simplicity
+  });
+  res.json({ url: `${CLIO_AUTH_URL}?${params.toString()}` });
+});
+
+app.get('/api/auth/clio/callback', async (req, res) => {
+  const { code, error, error_description } = req.query;
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  const redirectUri = `${appUrl}/api/auth/clio/callback`;
+
+  if (error) {
+    return res.status(400).send(`
+      <html>
+        <body style="font-family: sans-serif; padding: 2rem; text-align: center;">
+          <h2 style="color: #ef4444;">Clio Authentication Error</h2>
+          <p><strong>Error:</strong> ${error}</p>
+          <p><strong>Description:</strong> ${error_description || 'No description provided.'}</p>
+          <p style="margin-top: 2rem; color: #6b7280;">You can close this window and try again.</p>
+        </body>
+      </html>
+    `);
+  }
+
+  try {
+    const tokenResponse = await fetch(CLIO_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: code as string,
+        redirect_uri: redirectUri,
+        client_id: CLIO_CLIENT_ID,
+        client_secret: CLIO_CLIENT_SECRET,
+      })
+    });
+
+    const tokenData = await tokenResponse.json();
+
+    if (!tokenResponse.ok) {
+      throw new Error(tokenData.error_description || 'Failed to get Clio token');
+    }
+
+    // We need to know WHICH user initiated this. 
+    // Since this is a popup, we can't easily pass state back to the parent window securely via the callback URL 
+    // without storing it in a session or cookie.
+    // However, the parent window is listening for a postMessage.
+    // We can just send the token data back to the parent, and let the parent (which knows the user ID)
+    // call an API to store it. 
+    // OR, better: The parent window opened the popup. The parent window has the user ID.
+    // But the callback happens on the server.
+    // The server needs to know the user ID to store the token.
+    // We can pass the user ID in the 'state' parameter of the OAuth flow.
+    
+    // Let's assume we pass userId in state for now.
+    // Wait, I didn't implement state passing in the /url endpoint above fully.
+    // Let's update the /url endpoint to accept userId query param and pass it in state.
+    
+    // Actually, for simplicity in this "v1", let's just send a success message to the window opener.
+    // The window opener (the React app) will receive the message.
+    // BUT, we need to store the token in the DB associated with the user.
+    // So we MUST know the user ID here.
+    
+    // Let's rely on the 'state' param.
+    const state = req.query.state as string;
+    if (!state) {
+        throw new Error('Missing state parameter');
+    }
+    const userId = state; // Simple state for now
+
+    const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+
+    await db.run(`
+      INSERT INTO service_connections (id, user_id, provider, access_token, refresh_token, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, provider) DO UPDATE SET
+        access_token = excluded.access_token,
+        refresh_token = excluded.refresh_token,
+        expires_at = excluded.expires_at,
+        created_at = CURRENT_TIMESTAMP
+    `, [
+      uuidv4(),
+      userId,
+      'clio',
+      tokenData.access_token,
+      tokenData.refresh_token,
+      expiresAt
+    ]);
+
+    res.send(`
+      <html>
+        <body>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'CLIO_AUTH_SUCCESS' }, '*');
+              window.close();
+            } else {
+              window.location.href = '/';
+            }
+          </script>
+          <p>Clio authentication successful. This window should close automatically.</p>
+        </body>
+      </html>
+    `);
+
+  } catch (error: any) {
+    console.error('Clio OAuth error:', error);
+    res.status(500).send(`Authentication failed: ${error.message}`);
+  }
+});
 
 app.get('/api/auth/url', (req, res) => {
   const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
@@ -337,6 +533,52 @@ app.post('/api/ringcentral/webhooks', async (req, res) => {
       return res.status(401).json({ error: 'User not found' });
     }
     res.status(500).json({ error: error.message || 'Failed to create webhook' });
+  }
+});
+
+app.post('/api/clio/webhook', async (req, res) => {
+  const userId = req.headers['x-user-id'] as string;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { notifierId } = req.body;
+  if (!notifierId) return res.status(400).json({ error: 'notifierId is required' });
+
+  try {
+    const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+    const webhookUrl = `${appUrl}/api/webhook/${notifierId}`;
+
+    // Create webhook in Clio
+    // Clio API v4 requires 'url', 'fields', 'model' in the root or data object?
+    // Docs say: POST /api/v4/webhooks
+    // Body: { "data": { "url": "...", "fields": "id,display_number", "model": "Matter" } }
+    // Fields should be comma separated string or array? Docs usually imply string for some, array for others.
+    // Let's try array first, if fail, try string.
+    // Actually, looking at docs: "fields": "id,display_number" (string)
+    
+    const response = await clioFetch('/webhooks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: {
+          url: webhookUrl,
+          fields: "id,display_number,description,status,client", 
+          model: "Matter",
+          // events: "created,updated" // Some docs mention events, some don't. Default is all?
+          // Let's stick to basics.
+        }
+      })
+    }, userId);
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to create Clio webhook: ${text}`);
+    }
+
+    const data = await response.json();
+    res.json(data);
+  } catch (error: any) {
+    console.error('Failed to create Clio webhook:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 

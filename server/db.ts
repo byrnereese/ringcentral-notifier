@@ -40,6 +40,7 @@ class SQLiteAdapter implements IDatabase {
         filter_variable TEXT,
         filter_operator TEXT,
         filter_value TEXT,
+        provider TEXT DEFAULT 'custom',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id)
       );
@@ -66,6 +67,18 @@ class SQLiteAdapter implements IDatabase {
         FOREIGN KEY(user_id) REFERENCES users(id)
       );
 
+      CREATE TABLE IF NOT EXISTS service_connections (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        provider TEXT,
+        access_token TEXT,
+        refresh_token TEXT,
+        expires_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        UNIQUE(user_id, provider)
+      );
+
       CREATE TABLE IF NOT EXISTS webhook_events (
         id TEXT PRIMARY KEY,
         public_id TEXT,
@@ -83,6 +96,7 @@ class SQLiteAdapter implements IDatabase {
     try { this.db.exec("ALTER TABLE notifiers ADD COLUMN filter_variable TEXT;"); } catch (e) {}
     try { this.db.exec("ALTER TABLE notifiers ADD COLUMN filter_operator TEXT;"); } catch (e) {}
     try { this.db.exec("ALTER TABLE notifiers ADD COLUMN filter_value TEXT;"); } catch (e) {}
+    try { this.db.exec("ALTER TABLE notifiers ADD COLUMN provider TEXT DEFAULT 'custom';"); } catch (e) {}
     
     try {
       const tableExists = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='connectors'").get();
@@ -177,6 +191,7 @@ class PostgresAdapter implements IDatabase {
           filter_variable TEXT,
           filter_operator TEXT,
           filter_value TEXT,
+          provider TEXT DEFAULT 'custom',
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY(user_id) REFERENCES users(id)
         );
@@ -201,6 +216,18 @@ class PostgresAdapter implements IDatabase {
           is_personal BOOLEAN DEFAULT FALSE,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY(user_id) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS service_connections (
+          id TEXT PRIMARY KEY,
+          user_id TEXT,
+          provider TEXT,
+          access_token TEXT,
+          refresh_token TEXT,
+          expires_at TIMESTAMP,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(user_id) REFERENCES users(id),
+          UNIQUE(user_id, provider)
         );
 
         CREATE TABLE IF NOT EXISTS webhook_events (
@@ -229,6 +256,9 @@ class PostgresAdapter implements IDatabase {
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifiers' AND column_name='filter_value') THEN
               ALTER TABLE notifiers ADD COLUMN filter_value TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notifiers' AND column_name='provider') THEN
+              ALTER TABLE notifiers ADD COLUMN provider TEXT DEFAULT 'custom';
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='logs' AND column_name='is_test') THEN
               ALTER TABLE logs ADD COLUMN is_test BOOLEAN DEFAULT FALSE;

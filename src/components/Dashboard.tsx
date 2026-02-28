@@ -61,7 +61,7 @@ export default function Dashboard({ userId }: { userId: string }) {
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-slate-900">Your Notifiers</h2>
         <Link 
-          to="/notifiers/new" 
+          to="/notifiers/select" 
           className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors flex items-center gap-2"
         >
           <Plus className="w-4 h-4" />
@@ -76,10 +76,10 @@ export default function Dashboard({ userId }: { userId: string }) {
           </div>
           <h3 className="text-lg font-semibold text-slate-900 mb-2">No notifiers yet</h3>
           <p className="text-slate-500 mb-6 max-w-sm mx-auto">
-            Create your first notifier to start translating webhooks into RingCentral Adaptive Cards.
+            Create your first notifier to start translating webhooks into RingCentral Team Messaging.
           </p>
           <Link 
-            to="/notifiers/new" 
+            to="/notifiers/select" 
             className="inline-flex items-center gap-2 bg-indigo-50 text-indigo-700 px-6 py-3 rounded-lg font-medium hover:bg-indigo-100 transition-colors"
           >
             <Plus className="w-5 h-5" />
