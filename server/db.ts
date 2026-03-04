@@ -76,6 +76,7 @@ class SQLiteAdapter implements IDatabase {
         provider TEXT,
         access_token TEXT,
         refresh_token TEXT,
+        external_id TEXT,
         expires_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id),
@@ -103,6 +104,7 @@ class SQLiteAdapter implements IDatabase {
     try { this.db.exec("ALTER TABLE notifiers ADD COLUMN clio_model TEXT;"); } catch (e) {}
     try { this.db.exec("ALTER TABLE notifiers ADD COLUMN clio_events TEXT;"); } catch (e) {}
     try { this.db.exec("ALTER TABLE notifiers ADD COLUMN clio_webhook_id TEXT;"); } catch (e) {}
+    try { this.db.exec("ALTER TABLE service_connections ADD COLUMN external_id TEXT;"); } catch (e) {}
     
     try {
       const tableExists = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='connectors'").get();
@@ -233,6 +235,7 @@ class PostgresAdapter implements IDatabase {
           provider TEXT,
           access_token TEXT,
           refresh_token TEXT,
+          external_id TEXT,
           expires_at TIMESTAMP,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY(user_id) REFERENCES users(id),
@@ -283,6 +286,9 @@ class PostgresAdapter implements IDatabase {
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='logs' AND column_name='outbound_request') THEN
               ALTER TABLE logs ADD COLUMN outbound_request TEXT;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='service_connections' AND column_name='external_id') THEN
+              ALTER TABLE service_connections ADD COLUMN external_id TEXT;
             END IF;
           END
           $$;

@@ -20,6 +20,13 @@ const NOTIFIER_TYPES: NotifierType[] = [
     enabled: true
   },
   {
+    id: 'hubspot',
+    name: 'HubSpot',
+    description: 'Receive notifications about Contact updates and new leads.',
+    icon: <img src="/icons/icon-hubspot.png" alt="HubSpot" className="w-full h-full object-cover rounded-lg" />,
+    enabled: true
+  },
+  {
     id: 'hootsuite',
     name: 'Hootsuite',
     description: 'Receive updates from your social media channels.',

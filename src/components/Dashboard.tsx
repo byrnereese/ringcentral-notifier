@@ -36,10 +36,27 @@ export default function Dashboard({ userId }: { userId: string }) {
       const res = await fetch('/api/notifiers', {
         headers: { 'x-user-id': userId }
       });
+      
+      if (!res.ok) {
+        if (res.status === 401) {
+           // Clear session and redirect to login
+           localStorage.removeItem('userId');
+           window.location.href = '/';
+           return;
+        }
+        throw new Error(`Error fetching notifiers: ${res.statusText}`);
+      }
+
       const data = await res.json();
-      setNotifiers(data);
+      if (Array.isArray(data)) {
+        setNotifiers(data);
+      } else {
+        console.error('Received invalid data format for notifiers', data);
+        setNotifiers([]);
+      }
     } catch (error) {
       console.error('Failed to fetch notifiers', error);
+      setNotifiers([]);
     } finally {
       setLoading(false);
     }

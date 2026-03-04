@@ -29,10 +29,23 @@ export default function NotifierHistory({ userId }: { userId: string }) {
       const res = await fetch(`/api/notifiers/${id}/logs`, {
         headers: { 'x-user-id': userId }
       });
+      
+      if (res.status === 401) {
+        localStorage.removeItem('userId');
+        window.location.href = '/';
+        return;
+      }
+
       const data = await res.json();
-      setLogs(data);
+      if (Array.isArray(data)) {
+        setLogs(data);
+      } else {
+        console.error('Received invalid data format for logs', data);
+        setLogs([]);
+      }
     } catch (error) {
       console.error('Failed to fetch logs', error);
+      setLogs([]);
     } finally {
       setLoading(false);
     }

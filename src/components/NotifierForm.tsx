@@ -23,7 +23,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
   const [showVariablePicker, setShowVariablePicker] = useState(false);
 
   const [formData, setFormData] = useState({
-    name: provider === 'clio' ? 'Clio Notifier' : provider === 'uservoice' ? 'UserVoice Notifier' : '',
+    name: provider === 'clio' ? 'Clio Notifier' : provider === 'uservoice' ? 'UserVoice Notifier' : provider === 'hubspot' ? 'HubSpot Notifier' : '',
     glip_webhook_url: '',
     sample_payload: provider === 'clio' ? JSON.stringify({
       "data": {
@@ -52,6 +52,29 @@ export default function NotifierForm({ userId }: { userId: string }) {
           "email": "john@example.com"
         },
         "votes_count": 10
+      }
+    }, null, 2) : provider === 'hubspot' ? JSON.stringify({
+      "eventId": 100,
+      "subscriptionType": "contact.creation",
+      "portalId": 12345,
+      "occurredAt": 1588965600000,
+      "subscriptionId": 12345,
+      "attemptNumber": 0,
+      "objectId": 123,
+      "changeSource": "CRM",
+      "contact": {
+        "id": "123",
+        "properties": {
+          "firstname": "John",
+          "lastname": "Doe",
+          "email": "john@example.com",
+          "phone": "555-555-5555",
+          "company": "Example Inc",
+          "jobtitle": "CEO"
+        },
+        "createdAt": "2020-05-08T14:00:00.000Z",
+        "updatedAt": "2020-05-08T14:00:00.000Z",
+        "archived": false
       }
     }, null, 2) : '{\n  "event": "ticket_created",\n  "ticket": {\n    "id": "12345",\n    "title": "Server down",\n    "status": "open"\n  }\n}',
     adaptive_card_template: '',
@@ -112,11 +135,22 @@ export default function NotifierForm({ userId }: { userId: string }) {
   const [clioConnected, setClioConnected] = useState(false);
   const [connectingClio, setConnectingClio] = useState(false);
 
+  // HubSpot specific state
+  const [hubSpotConnected, setHubSpotConnected] = useState(false);
+  const [connectingHubSpot, setConnectingHubSpot] = useState(false);
+
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'CLIO_AUTH_SUCCESS') {
         setClioConnected(true);
         setConnectingClio(false);
+      } else if (event.data?.type === 'HUBSPOT_AUTH_SUCCESS') {
+        setHubSpotConnected(true);
+        setConnectingHubSpot(false);
+      } else if (event.data?.type === 'OAUTH_AUTH_ERROR') {
+        setConnectingClio(false);
+        setConnectingHubSpot(false);
+        alert(`Authentication failed: ${event.data.error || 'Unknown error'}`);
       }
     };
     window.addEventListener('message', handleMessage);
@@ -153,6 +187,29 @@ export default function NotifierForm({ userId }: { userId: string }) {
       console.error('Failed to get Clio auth URL', error);
       setConnectingClio(false);
       alert('Failed to start Clio connection');
+    }
+  };
+
+  const handleConnectHubSpot = async () => {
+    setConnectingHubSpot(true);
+    try {
+      const res = await fetch(`/api/auth/hubspot/url?userId=${userId}`);
+      const data = await res.json();
+      
+      const width = 600;
+      const height = 700;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+      
+      window.open(
+        data.url,
+        'HubSpot Auth',
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+    } catch (error) {
+      console.error('Failed to get HubSpot auth URL', error);
+      setConnectingHubSpot(false);
+      alert('Failed to start HubSpot connection');
     }
   };
 
@@ -265,6 +322,13 @@ export default function NotifierForm({ userId }: { userId: string }) {
       const res = await fetch('/api/notifiers', {
         headers: { 'x-user-id': userId }
       });
+      
+      if (res.status === 401) {
+        localStorage.removeItem('userId');
+        window.location.href = '/';
+        return;
+      }
+
       const data = await res.json();
       const notifier = data.find((c: any) => c.id === id);
       if (notifier) {
@@ -297,7 +361,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
       
       if (res.status === 401) {
         localStorage.removeItem('userId');
-        window.location.reload();
+        window.location.href = '/';
         return;
       }
 
@@ -387,7 +451,7 @@ export default function NotifierForm({ userId }: { userId: string }) {
       
       if (res.status === 401) {
         localStorage.removeItem('userId');
-        window.location.reload();
+        window.location.href = '/';
         return;
       }
       
@@ -452,6 +516,13 @@ export default function NotifierForm({ userId }: { userId: string }) {
         },
         body: JSON.stringify({ sample_payload: formData.sample_payload })
       });
+
+      if (res.status === 401) {
+        localStorage.removeItem('userId');
+        window.location.href = '/';
+        return;
+      }
+
       const data = await res.json();
       if (data.template) {
         setFormData(prev => ({ ...prev, adaptive_card_template: data.template }));
@@ -493,6 +564,12 @@ export default function NotifierForm({ userId }: { userId: string }) {
         },
         body: JSON.stringify(payload)
       });
+
+      if (saveRes.status === 401) {
+        localStorage.removeItem('userId');
+        window.location.href = '/';
+        return;
+      }
 
       if (!saveRes.ok) {
         throw new Error('Failed to save notifier configuration before testing');
@@ -595,6 +672,12 @@ export default function NotifierForm({ userId }: { userId: string }) {
         },
         body: JSON.stringify(payload)
       });
+
+      if (res.status === 401) {
+        localStorage.removeItem('userId');
+        window.location.href = '/';
+        return;
+      }
 
       if (res.ok) {
         const savedNotifier = await res.json();
@@ -719,6 +802,72 @@ export default function NotifierForm({ userId }: { userId: string }) {
                       </label>
                     ))}
                   </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {provider === 'hubspot' && (
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm">
+            <h3 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-4 flex items-center gap-2">
+              <img src="/icons/icon-hubspot.png" alt="HubSpot" className="w-6 h-6 object-contain" />
+              Connect to HubSpot
+            </h3>
+            <p className="text-sm text-slate-500">
+              Connect your HubSpot account to receive notifications about Contact updates.
+            </p>
+            
+            <div className="flex items-center gap-4">
+              {hubSpotConnected ? (
+                <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200">
+                  <Check className="w-5 h-5" />
+                  <span className="font-medium">Connected to HubSpot</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleConnectHubSpot}
+                  disabled={connectingHubSpot}
+                  className="bg-[#ff7a59] text-white px-6 py-2.5 rounded-lg font-medium hover:bg-[#e66e50] transition-colors flex items-center gap-2 disabled:opacity-70"
+                >
+                  {connectingHubSpot ? <Loader2 className="w-4 h-4 animate-spin" /> : <LinkIcon className="w-4 h-4" />}
+                  Connect HubSpot Account
+                </button>
+              )}
+            </div>
+
+            {hubSpotConnected && (
+              <div className="space-y-4 pt-4 border-t border-slate-100">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
+                  <p className="font-semibold mb-1">Webhook Configuration Required</p>
+                  <p>
+                    HubSpot does not support automatic webhook creation via API for this integration type. 
+                    You must manually configure a workflow or webhook in HubSpot to send data to the following URL:
+                  </p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <code className="flex-1 bg-white border border-blue-200 rounded px-2 py-1 font-mono break-all">
+                      {appUrl ? `${appUrl}/api/hubspot/webhook` : 'Loading URL...'}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (appUrl) {
+                          navigator.clipboard.writeText(`${appUrl}/api/hubspot/webhook`);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }
+                      }}
+                      className="p-1.5 text-blue-600 hover:bg-blue-100 rounded transition-colors"
+                      title="Copy URL"
+                    >
+                      {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-blue-700">
+                    Note: This URL is unique to your HubSpot app, but shared across all your notifiers. 
+                    We identify your account automatically.
+                  </p>
                 </div>
               </div>
             )}

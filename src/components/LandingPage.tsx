@@ -99,6 +99,69 @@ export default function LandingPage() {
               </p>
             </div>
           </div>
+
+          <div className="pt-12">
+            <h2 className="text-3xl font-bold text-slate-900 mb-12">Supported Integrations</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
+              {[
+                {
+                  id: 'clio',
+                  name: 'Clio',
+                  description: 'Connect to Clio Manage to receive notifications about Matters, Contacts, and more.',
+                  icon: '/icons/icon-clio.png'
+                },
+                {
+                  id: 'hubspot',
+                  name: 'HubSpot',
+                  description: 'Receive notifications about Contact updates and new leads.',
+                  icon: '/icons/icon-hubspot.png'
+                },
+                {
+                  id: 'uservoice',
+                  name: 'UserVoice',
+                  description: 'Receive notifications about new suggestions and comments.',
+                  icon: '/icons/icon-uservoice.png'
+                },
+                {
+                  id: 'hootsuite',
+                  name: 'Hootsuite',
+                  description: 'Receive updates from your social media channels.',
+                  icon: '/icons/icon-hootsuite.png',
+                  comingSoon: true
+                },
+                {
+                  id: 'birdeye',
+                  name: 'BirdEye',
+                  description: 'Get notified about new reviews and customer feedback.',
+                  icon: '/icons/icon-birdeye.png',
+                  comingSoon: true
+                },
+                {
+                  id: 'custom',
+                  name: 'Custom Webhook',
+                  description: 'Connect any service that supports webhooks.',
+                  iconComponent: <Zap className="w-8 h-8 text-slate-600" />
+                }
+              ].map((integration) => (
+                <div key={integration.id} className="group p-6 rounded-2xl bg-white border border-slate-200 hover:border-blue-500 hover:shadow-md transition-all duration-200">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="w-12 h-12 rounded-lg bg-slate-50 flex items-center justify-center overflow-hidden">
+                      {integration.icon ? (
+                        <img src={integration.icon} alt={integration.name} className="w-full h-full object-cover" />
+                      ) : (
+                        integration.iconComponent
+                      )}
+                    </div>
+                    {integration.comingSoon && (
+                      <span className="px-2.5 py-0.5 bg-slate-100 text-slate-600 text-xs font-medium rounded-full">Coming Soon</span>
+                    )}
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900 mb-2 group-hover:text-blue-600 transition-colors">{integration.name}</h3>
+                  <p className="text-slate-600 text-sm leading-relaxed">{integration.description}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 

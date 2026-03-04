@@ -114,6 +114,354 @@ async function clioFetch(url: string, options: any, userId: string) {
   return res;
 }
 
+// HubSpot Integration
+const HUBSPOT_CLIENT_ID = process.env.HUBSPOT_CLIENT_ID;
+const HUBSPOT_CLIENT_SECRET = process.env.HUBSPOT_CLIENT_SECRET;
+const HUBSPOT_AUTH_URL = 'https://app.hubspot.com/oauth/authorize';
+const HUBSPOT_TOKEN_URL = 'https://api.hubapi.com/oauth/v1/token';
+const HUBSPOT_API_URL = 'https://api.hubapi.com';
+
+// Helper to refresh HubSpot token
+async function refreshHubSpotToken(userId: string, refreshToken: string) {
+  try {
+    const response = await fetch(HUBSPOT_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: HUBSPOT_CLIENT_ID || '',
+        client_secret: HUBSPOT_CLIENT_SECRET || '',
+        refresh_token: refreshToken
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to refresh HubSpot token');
+    }
+
+    const data = await response.json();
+    const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
+
+    await db.run(`
+      UPDATE service_connections 
+      SET access_token = ?, refresh_token = ?, expires_at = ?
+      WHERE user_id = ? AND provider = 'hubspot'
+    `, [data.access_token, data.refresh_token, expiresAt, userId]);
+
+    return data.access_token;
+  } catch (error) {
+    console.error('Error refreshing HubSpot token:', error);
+    throw error;
+  }
+}
+
+// Helper to make authenticated HubSpot API calls
+async function hubSpotFetch(url: string, options: any, userId: string) {
+  const connection = await db.get('SELECT * FROM service_connections WHERE user_id = ? AND provider = ?', [userId, 'hubspot']);
+  if (!connection) throw new Error('HubSpot connection not found');
+
+  let accessToken = connection.access_token;
+
+  // Check if token is expired or about to expire (within 5 mins)
+  if (new Date(connection.expires_at).getTime() - Date.now() < 5 * 60 * 1000) {
+    accessToken = await refreshHubSpotToken(userId, connection.refresh_token);
+  }
+
+  let res = await fetch(`${HUBSPOT_API_URL}${url}`, {
+    ...options,
+    headers: {
+      ...options.headers,
+      'Authorization': `Bearer ${accessToken}`
+    }
+  });
+
+  if (res.status === 401) {
+    // Try one more refresh if 401
+    accessToken = await refreshHubSpotToken(userId, connection.refresh_token);
+    res = await fetch(`${HUBSPOT_API_URL}${url}`, {
+      ...options,
+      headers: {
+        ...options.headers,
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+  }
+
+  return res;
+}
+
+app.get('/api/auth/hubspot/url', (req, res) => {
+  const userId = req.query.userId as string;
+  if (!userId) {
+    return res.status(400).json({ error: 'Missing userId' });
+  }
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  const redirectUri = `${appUrl}/api/auth/hubspot/callback`;
+  const params = new URLSearchParams({
+    client_id: HUBSPOT_CLIENT_ID || '',
+    redirect_uri: redirectUri,
+    scope: 'crm.objects.contacts.read crm.objects.contacts.write', // Basic scope for contacts
+    state: userId, 
+  });
+  res.json({ url: `${HUBSPOT_AUTH_URL}?${params.toString()}` });
+});
+
+app.get('/api/auth/hubspot/callback', async (req, res) => {
+  const { code, error, error_description, state } = req.query;
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  const redirectUri = `${appUrl}/api/auth/hubspot/callback`;
+
+  if (error) {
+    return res.status(400).send(`
+      <html>
+        <body style="font-family: sans-serif; padding: 2rem; text-align: center;">
+          <h2 style="color: #ef4444;">HubSpot Authentication Error</h2>
+          <p><strong>Error:</strong> ${error}</p>
+          <p><strong>Description:</strong> ${error_description || 'No description provided.'}</p>
+        </body>
+      </html>
+    `);
+  }
+
+  try {
+    const tokenResponse = await fetch(HUBSPOT_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: HUBSPOT_CLIENT_ID || '',
+        client_secret: HUBSPOT_CLIENT_SECRET || '',
+        redirect_uri: redirectUri,
+        code: code as string
+      })
+    });
+
+    const tokenData = await tokenResponse.json();
+
+    if (!tokenResponse.ok) {
+      throw new Error(tokenData.message || 'Failed to get HubSpot token');
+    }
+
+    // Get Portal ID (Hub ID)
+    const infoResponse = await fetch(`${HUBSPOT_API_URL}/oauth/v1/access-tokens/${tokenData.access_token}`);
+    const infoData = await infoResponse.json();
+    
+    if (!infoResponse.ok) {
+      throw new Error('Failed to get HubSpot account info');
+    }
+    
+    const portalId = infoData.hub_id;
+    const userId = state as string;
+
+    // Verify user exists before inserting to avoid FK constraint errors
+    const userExists = await db.get('SELECT id FROM users WHERE id = ?', [userId]);
+    if (!userExists) {
+      return res.status(401).send(`
+        <html>
+          <body style="font-family: sans-serif; padding: 2rem; text-align: center;">
+            <h2 style="color: #ef4444;">Session Expired</h2>
+            <p>Your user session was not found. Please go back to the app, logout, and login again with RingCentral.</p>
+            <script>
+              setTimeout(() => {
+                if (window.opener) {
+                  window.opener.postMessage({ type: 'OAUTH_AUTH_ERROR', error: 'User session not found' }, '*');
+                  window.close();
+                }
+              }, 3000);
+            </script>
+          </body>
+        </html>
+      `);
+    }
+
+    const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+
+    await db.run(`
+      INSERT INTO service_connections (id, user_id, provider, access_token, refresh_token, external_id, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, provider) DO UPDATE SET
+        access_token = excluded.access_token,
+        refresh_token = excluded.refresh_token,
+        external_id = excluded.external_id,
+        expires_at = excluded.expires_at,
+        created_at = CURRENT_TIMESTAMP
+    `, [
+      uuidv4(),
+      userId,
+      'hubspot',
+      tokenData.access_token,
+      tokenData.refresh_token,
+      String(portalId),
+      expiresAt
+    ]);
+
+    res.send(`
+      <html>
+        <body>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'HUBSPOT_AUTH_SUCCESS' }, '*');
+              window.close();
+            } else {
+              window.location.href = '/';
+            }
+          </script>
+          <p>HubSpot authentication successful. This window should close automatically.</p>
+        </body>
+      </html>
+    `);
+
+  } catch (error: any) {
+    console.error('HubSpot OAuth error:', error);
+    res.status(500).send(`Authentication failed: ${error.message}`);
+  }
+});
+
+// HubSpot Webhook Handler
+app.post('/api/hubspot/webhook', async (req, res) => {
+  const events = req.body;
+  
+  if (!Array.isArray(events) || events.length === 0) {
+    return res.status(200).send('No events');
+  }
+
+  // Assuming all events in a batch are for the same portal
+  const portalId = events[0].portalId || events[0].hub_id; 
+  
+  if (!portalId) {
+    console.error('HubSpot webhook missing portalId');
+    return res.status(400).send('Missing portalId');
+  }
+
+  try {
+    // Find the user associated with this portal
+    const connection = await db.get('SELECT user_id FROM service_connections WHERE provider = ? AND external_id = ?', ['hubspot', String(portalId)]);
+    
+    if (!connection) {
+      console.warn(`No user found for HubSpot portal ${portalId}`);
+      return res.status(200).send('Ignored: No user connection');
+    }
+
+    const userId = connection.user_id;
+
+    // Find all HubSpot notifiers for this user
+    const notifiers = await db.query('SELECT * FROM notifiers WHERE user_id = ? AND provider = ?', [userId, 'hubspot']);
+
+    if (notifiers.length === 0) {
+      console.log(`No HubSpot notifiers configured for user ${userId}`);
+      return res.status(200).send('Ignored: No notifiers');
+    }
+
+    // Process each event against each notifier
+    for (const event of events) {
+      // Enrich event with contact details if it's a contact event
+      let enrichedEvent = { ...event };
+      
+      if (event.subscriptionType === 'contact.creation' || event.subscriptionType === 'contact.propertyChange') {
+        try {
+          const contactRes = await hubSpotFetch(`/crm/v3/objects/contacts/${event.objectId}?properties=firstname,lastname,email,phone,company,jobtitle`, {
+            method: 'GET'
+          }, userId);
+          
+          if (contactRes.ok) {
+            const contactData = await contactRes.json();
+            enrichedEvent.contact = contactData;
+          }
+        } catch (e) {
+          console.error('Failed to fetch contact details from HubSpot', e);
+        }
+      }
+
+      for (const notifier of notifiers) {
+        const traceId = uuidv4();
+        let generatedCard = '';
+        let status = 'success';
+        let outboundResponse = '';
+
+        try {
+          // Generate Card
+          let templateStr = notifier.adaptive_card_template;
+          
+          // Replace tokens
+          templateStr = templateStr.replace(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (match: string, path: string) => {
+            const keys = path.split('.');
+            let value: any = enrichedEvent;
+            for (const key of keys) {
+              if (value && typeof value === 'object' && key in value) {
+                value = value[key];
+              } else {
+                return match; 
+              }
+            }
+            if (typeof value === 'object') {
+              return JSON.stringify(value);
+            }
+            // Escape double quotes and newlines for JSON string values
+            return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+          });
+
+          generatedCard = templateStr;
+          let cardJson;
+          try {
+            cardJson = JSON.parse(generatedCard);
+          } catch (e) {
+            // If template replacement resulted in invalid JSON (e.g. unescaped quotes), try to fix or fail
+            console.error('Invalid JSON generated from template', e);
+            throw new Error('Generated card is not valid JSON');
+          }
+          
+          let outboundPayload;
+          if (Array.isArray(cardJson)) {
+            outboundPayload = { attachments: cardJson };
+          } else if (cardJson.attachments) {
+            outboundPayload = cardJson;
+          } else {
+            outboundPayload = { attachments: [cardJson] };
+          }
+
+          // Send to RingCentral
+          const rcResponse = await fetch(notifier.glip_webhook_url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(outboundPayload)
+          });
+          
+          outboundResponse = await rcResponse.text();
+          
+          if (!rcResponse.ok) {
+            status = 'error';
+          }
+
+        } catch (e: any) {
+          console.error('Error processing HubSpot event for notifier', notifier.id, e);
+          status = 'error';
+          outboundResponse = e.message;
+        }
+
+        // Log
+        await db.run(`
+          INSERT INTO logs (id, notifier_id, status, inbound_request, generated_card, outbound_request, outbound_response)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [
+          uuidv4(),
+          notifier.id,
+          status,
+          JSON.stringify(enrichedEvent),
+          generatedCard,
+          'HubSpot Webhook Auto-Forward',
+          outboundResponse
+        ]);
+      }
+    }
+
+    res.status(200).send('Processed');
+
+  } catch (error) {
+    console.error('Error processing HubSpot webhook:', error);
+    res.status(500).send('Internal Server Error');
+  }
+});
+
 app.get('/api/auth/clio/url', (req, res) => {
   const userId = req.query.userId as string;
   if (!userId) {
@@ -236,15 +584,24 @@ app.get('/api/auth/clio/callback', async (req, res) => {
 });
 
 app.get('/api/auth/url', (req, res) => {
+  console.log('[GET /api/auth/url] Hit!');
   const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
   const redirectUri = `${appUrl}/api/auth/callback`;
+  
+  if (!RC_CLIENT_ID) {
+    console.error('[GET /api/auth/url] RC_CLIENT_ID is missing!');
+    return res.status(500).json({ error: 'Server misconfiguration: Missing RC_CLIENT_ID' });
+  }
+
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: RC_CLIENT_ID,
     redirect_uri: redirectUri,
     state: crypto.randomBytes(16).toString('hex'),
   });
-  res.json({ url: `${RC_SERVER_URL}/restapi/oauth/authorize?${params.toString()}` });
+  const authUrl = `${RC_SERVER_URL}/restapi/oauth/authorize?${params.toString()}`;
+  console.log('[GET /api/auth/url] Returning URL:', authUrl);
+  res.json({ url: authUrl });
 });
 
 app.get('/api/auth/callback', async (req, res) => {
@@ -398,6 +755,10 @@ app.get('/api/ringcentral/teams', async (req, res) => {
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
+    // Validate user exists
+    const user = await db.get('SELECT id FROM users WHERE id = ?', [userId]);
+    if (!user) return res.status(401).json({ error: 'User not found' });
+
     const cachedTeams = await db.query('SELECT * FROM teams WHERE user_id = ?', [userId]);
     res.json({ records: cachedTeams.map((t: any) => ({ id: t.id, name: t.name, isPersonal: !!t.is_personal })) });
   } catch (error: any) {
@@ -592,6 +953,10 @@ app.get('/api/notifiers', async (req, res) => {
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
+    // Validate user exists
+    const user = await db.get('SELECT id FROM users WHERE id = ?', [userId]);
+    if (!user) return res.status(401).json({ error: 'User not found' });
+
     const notifiers = await db.query('SELECT * FROM notifiers WHERE user_id = ? ORDER BY created_at DESC', [userId]);
     res.json(notifiers);
   } catch (error: any) {
@@ -1106,6 +1471,12 @@ app.get('/api/webhook/:notifierId', (req, res) => {
 app.use((err: any, req: any, res: any, next: any) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal Server Error' });
+});
+
+// Catch-all for API routes to prevent falling through to Vite
+app.all('/api/*', (req, res) => {
+  console.log(`[API 404] ${req.method} ${req.url}`);
+  res.status(404).json({ error: 'API route not found' });
 });
 
 async function startServer() {
