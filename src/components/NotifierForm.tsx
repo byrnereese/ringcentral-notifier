@@ -83,7 +83,8 @@ export default function NotifierForm({ userId }: { userId: string }) {
     filter_operator: '',
     filter_value: '',
     clio_model: 'matter',
-    clio_events: ['created', 'updated']
+    clio_events: ['created', 'updated'],
+    hubspot_object_type: 'contact'
   });
 
   const CLIO_MODELS = [
@@ -139,14 +140,19 @@ export default function NotifierForm({ userId }: { userId: string }) {
   const [hubSpotConnected, setHubSpotConnected] = useState(false);
   const [connectingHubSpot, setConnectingHubSpot] = useState(false);
 
+  // Connection details
+  const [connections, setConnections] = useState<{[key: string]: { username: string }}>({});
+
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'CLIO_AUTH_SUCCESS') {
         setClioConnected(true);
         setConnectingClio(false);
+        fetchConnections();
       } else if (event.data?.type === 'HUBSPOT_AUTH_SUCCESS') {
         setHubSpotConnected(true);
         setConnectingHubSpot(false);
+        fetchConnections();
       } else if (event.data?.type === 'OAUTH_AUTH_ERROR') {
         setConnectingClio(false);
         setConnectingHubSpot(false);
@@ -156,6 +162,57 @@ export default function NotifierForm({ userId }: { userId: string }) {
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
+
+  useEffect(() => {
+    fetchConnections();
+  }, [userId]);
+
+  const fetchConnections = async () => {
+    try {
+      const res = await fetch('/api/connections', {
+        headers: { 'x-user-id': userId }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const connMap: {[key: string]: { username: string }} = {};
+        data.forEach((c: any) => {
+          connMap[c.provider] = { username: c.username };
+          if (c.provider === 'clio') setClioConnected(true);
+          if (c.provider === 'hubspot') setHubSpotConnected(true);
+        });
+        setConnections(connMap);
+      }
+    } catch (error) {
+      console.error('Failed to fetch connections', error);
+    }
+  };
+
+  const handleDisconnect = async (provider: string) => {
+    if (!confirm(`Are you sure you want to disconnect from ${provider}?`)) return;
+    
+    try {
+      const res = await fetch(`/api/connections/${provider}`, {
+        method: 'DELETE',
+        headers: { 'x-user-id': userId }
+      });
+      
+      if (res.ok) {
+        if (provider === 'clio') setClioConnected(false);
+        if (provider === 'hubspot') setHubSpotConnected(false);
+        
+        setConnections(prev => {
+          const next = { ...prev };
+          delete next[provider];
+          return next;
+        });
+      } else {
+        alert('Failed to disconnect');
+      }
+    } catch (error) {
+      console.error('Failed to disconnect', error);
+      alert('Failed to disconnect');
+    }
+  };
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -340,7 +397,10 @@ export default function NotifierForm({ userId }: { userId: string }) {
           team_name: notifier.team_name || '',
           filter_variable: notifier.filter_variable || '',
           filter_operator: notifier.filter_operator || '',
-          filter_value: notifier.filter_value || ''
+          filter_value: notifier.filter_value || '',
+          clio_model: notifier.clio_model || 'matter',
+          clio_events: notifier.clio_events ? JSON.parse(notifier.clio_events) : ['created', 'updated'],
+          hubspot_object_type: notifier.hubspot_object_type || 'contact'
         });
         
         if (notifier.filter_variable || notifier.filter_operator || notifier.filter_value) {
@@ -746,9 +806,18 @@ export default function NotifierForm({ userId }: { userId: string }) {
             
             <div className="flex items-center gap-4">
               {clioConnected ? (
-                <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200">
-                  <Check className="w-5 h-5" />
-                  <span className="font-medium">Connected to Clio</span>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200">
+                    <Check className="w-5 h-5" />
+                    <span className="font-medium">Connected as {connections['clio']?.username || 'User'}</span>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => handleDisconnect('clio')} 
+                    className="text-sm text-red-600 hover:text-red-700 hover:underline font-medium"
+                  >
+                    Disconnect
+                  </button>
                 </div>
               ) : (
                 <button
@@ -820,9 +889,18 @@ export default function NotifierForm({ userId }: { userId: string }) {
             
             <div className="flex items-center gap-4">
               {hubSpotConnected ? (
-                <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200">
-                  <Check className="w-5 h-5" />
-                  <span className="font-medium">Connected to HubSpot</span>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200">
+                    <Check className="w-5 h-5" />
+                    <span className="font-medium">Connected as {connections['hubspot']?.username || 'User'}</span>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => handleDisconnect('hubspot')} 
+                    className="text-sm text-red-600 hover:text-red-700 hover:underline font-medium"
+                  >
+                    Disconnect
+                  </button>
                 </div>
               ) : (
                 <button
@@ -839,11 +917,28 @@ export default function NotifierForm({ userId }: { userId: string }) {
 
             {hubSpotConnected && (
               <div className="space-y-4 pt-4 border-t border-slate-100">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-slate-700">
+                    Object to Monitor
+                  </label>
+                  <select
+                    value={formData.hubspot_object_type || 'contact'}
+                    onChange={(e) => setFormData({ ...formData, hubspot_object_type: e.target.value })}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                  >
+                    <option value="contact">Contacts</option>
+                    <option value="company">Companies</option>
+                    <option value="deal">Deals</option>
+                  </select>
+                  <p className="text-xs text-slate-500">
+                    Select which HubSpot object type this notifier should listen for.
+                  </p>
+                </div>
+
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
-                  <p className="font-semibold mb-1">Webhook Configuration Required</p>
+                  <p className="font-semibold mb-1">Webhook Configuration</p>
                   <p>
-                    HubSpot does not support automatic webhook creation via API for this integration type. 
-                    You must manually configure a workflow or webhook in HubSpot to send data to the following URL:
+                    Configure your HubSpot workflow to send data to this URL:
                   </p>
                   <div className="flex items-center gap-2 mt-2">
                     <code className="flex-1 bg-white border border-blue-200 rounded px-2 py-1 font-mono break-all">
@@ -864,10 +959,6 @@ export default function NotifierForm({ userId }: { userId: string }) {
                       {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                     </button>
                   </div>
-                  <p className="mt-2 text-xs text-blue-700">
-                    Note: This URL is unique to your HubSpot app, but shared across all your notifiers. 
-                    We identify your account automatically.
-                  </p>
                 </div>
               </div>
             )}

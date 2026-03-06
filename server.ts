@@ -4,6 +4,12 @@ import db from './server/db';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI } from '@google/genai';
 import crypto from 'crypto';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -242,7 +248,7 @@ app.get('/api/auth/hubspot/callback', async (req, res) => {
       throw new Error(tokenData.message || 'Failed to get HubSpot token');
     }
 
-    // Get Portal ID (Hub ID)
+    // Get Portal ID (Hub ID) and User Info
     const infoResponse = await fetch(`${HUBSPOT_API_URL}/oauth/v1/access-tokens/${tokenData.access_token}`);
     const infoData = await infoResponse.json();
     
@@ -251,6 +257,7 @@ app.get('/api/auth/hubspot/callback', async (req, res) => {
     }
     
     const portalId = infoData.hub_id;
+    const username = infoData.user || infoData.hub_domain || `Portal ${portalId}`;
     const userId = state as string;
 
     // Verify user exists before inserting to avoid FK constraint errors
@@ -277,12 +284,13 @@ app.get('/api/auth/hubspot/callback', async (req, res) => {
     const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
 
     await db.run(`
-      INSERT INTO service_connections (id, user_id, provider, access_token, refresh_token, external_id, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO service_connections (id, user_id, provider, access_token, refresh_token, external_id, username, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, provider) DO UPDATE SET
         access_token = excluded.access_token,
         refresh_token = excluded.refresh_token,
         external_id = excluded.external_id,
+        username = excluded.username,
         expires_at = excluded.expires_at,
         created_at = CURRENT_TIMESTAMP
     `, [
@@ -292,6 +300,7 @@ app.get('/api/auth/hubspot/callback', async (req, res) => {
       tokenData.access_token,
       tokenData.refresh_token,
       String(portalId),
+      username,
       expiresAt
     ]);
 
@@ -300,7 +309,7 @@ app.get('/api/auth/hubspot/callback', async (req, res) => {
         <body>
           <script>
             if (window.opener) {
-              window.opener.postMessage({ type: 'HUBSPOT_AUTH_SUCCESS' }, '*');
+              window.opener.postMessage({ type: 'HUBSPOT_AUTH_SUCCESS', username: '${username}' }, '*');
               window.close();
             } else {
               window.location.href = '/';
@@ -354,10 +363,29 @@ app.post('/api/hubspot/webhook', async (req, res) => {
 
     // Process each event against each notifier
     for (const event of events) {
+      // Determine object type from subscriptionType (e.g. contact.creation -> contact)
+      const subscriptionType = event.subscriptionType || '';
+      let objectType = 'contact'; // default
+      if (subscriptionType.startsWith('company.')) objectType = 'company';
+      else if (subscriptionType.startsWith('deal.')) objectType = 'deal';
+      else if (subscriptionType.startsWith('contact.')) objectType = 'contact';
+
+      // Filter notifiers that match this object type
+      const matchingNotifiers = notifiers.filter((n: any) => {
+        // If no object type is set on notifier, default to 'contact' for backward compatibility
+        const notifierObjectType = n.hubspot_object_type || 'contact';
+        return notifierObjectType === objectType;
+      });
+
+      if (matchingNotifiers.length === 0) {
+        console.log(`No notifiers found for object type ${objectType} (event: ${subscriptionType})`);
+        continue;
+      }
+
       // Enrich event with contact details if it's a contact event
       let enrichedEvent = { ...event };
       
-      if (event.subscriptionType === 'contact.creation' || event.subscriptionType === 'contact.propertyChange') {
+      if (objectType === 'contact' && (event.subscriptionType === 'contact.creation' || event.subscriptionType === 'contact.propertyChange')) {
         try {
           const contactRes = await hubSpotFetch(`/crm/v3/objects/contacts/${event.objectId}?properties=firstname,lastname,email,phone,company,jobtitle`, {
             method: 'GET'
@@ -370,9 +398,35 @@ app.post('/api/hubspot/webhook', async (req, res) => {
         } catch (e) {
           console.error('Failed to fetch contact details from HubSpot', e);
         }
+      } else if (objectType === 'company') {
+         try {
+          const companyRes = await hubSpotFetch(`/crm/v3/objects/companies/${event.objectId}?properties=name,domain,city,state,phone`, {
+            method: 'GET'
+          }, userId);
+          
+          if (companyRes.ok) {
+            const companyData = await companyRes.json();
+            enrichedEvent.company = companyData;
+          }
+        } catch (e) {
+          console.error('Failed to fetch company details from HubSpot', e);
+        }
+      } else if (objectType === 'deal') {
+         try {
+          const dealRes = await hubSpotFetch(`/crm/v3/objects/deals/${event.objectId}?properties=dealname,amount,dealstage,pipeline,closedate`, {
+            method: 'GET'
+          }, userId);
+          
+          if (dealRes.ok) {
+            const dealData = await dealRes.json();
+            enrichedEvent.deal = dealData;
+          }
+        } catch (e) {
+          console.error('Failed to fetch deal details from HubSpot', e);
+        }
       }
 
-      for (const notifier of notifiers) {
+      for (const notifier of matchingNotifiers) {
         const traceId = uuidv4();
         let generatedCard = '';
         let status = 'success';
@@ -515,41 +569,40 @@ app.get('/api/auth/clio/callback', async (req, res) => {
       throw new Error(tokenData.error_description || 'Failed to get Clio token');
     }
 
-    // We need to know WHICH user initiated this. 
-    // Since this is a popup, we can't easily pass state back to the parent window securely via the callback URL 
-    // without storing it in a session or cookie.
-    // However, the parent window is listening for a postMessage.
-    // We can just send the token data back to the parent, and let the parent (which knows the user ID)
-    // call an API to store it. 
-    // OR, better: The parent window opened the popup. The parent window has the user ID.
-    // But the callback happens on the server.
-    // The server needs to know the user ID to store the token.
-    // We can pass the user ID in the 'state' parameter of the OAuth flow.
-    
-    // Let's assume we pass userId in state for now.
-    // Wait, I didn't implement state passing in the /url endpoint above fully.
-    // Let's update the /url endpoint to accept userId query param and pass it in state.
-    
-    // Actually, for simplicity in this "v1", let's just send a success message to the window opener.
-    // The window opener (the React app) will receive the message.
-    // BUT, we need to store the token in the DB associated with the user.
-    // So we MUST know the user ID here.
-    
-    // Let's rely on the 'state' param.
     const state = req.query.state as string;
     if (!state) {
         throw new Error('Missing state parameter');
     }
-    const userId = state; // Simple state for now
+    const userId = state;
+
+    // Fetch user info from Clio
+    const userRes = await fetch(`${CLIO_API_URL}/users/who_am_i`, {
+      headers: {
+        'Authorization': `Bearer ${tokenData.access_token}`
+      }
+    });
+    
+    let username = 'Connected User';
+    let externalId = null;
+
+    if (userRes.ok) {
+      const userData = await userRes.json();
+      if (userData.data) {
+        username = userData.data.name || userData.data.email || username;
+        externalId = String(userData.data.id);
+      }
+    }
 
     const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
 
     await db.run(`
-      INSERT INTO service_connections (id, user_id, provider, access_token, refresh_token, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO service_connections (id, user_id, provider, access_token, refresh_token, external_id, username, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, provider) DO UPDATE SET
         access_token = excluded.access_token,
         refresh_token = excluded.refresh_token,
+        external_id = excluded.external_id,
+        username = excluded.username,
         expires_at = excluded.expires_at,
         created_at = CURRENT_TIMESTAMP
     `, [
@@ -558,6 +611,8 @@ app.get('/api/auth/clio/callback', async (req, res) => {
       'clio',
       tokenData.access_token,
       tokenData.refresh_token,
+      externalId,
+      username,
       expiresAt
     ]);
 
@@ -566,7 +621,7 @@ app.get('/api/auth/clio/callback', async (req, res) => {
         <body>
           <script>
             if (window.opener) {
-              window.opener.postMessage({ type: 'CLIO_AUTH_SUCCESS' }, '*');
+              window.opener.postMessage({ type: 'CLIO_AUTH_SUCCESS', username: '${username}' }, '*');
               window.close();
             } else {
               window.location.href = '/';
@@ -580,6 +635,44 @@ app.get('/api/auth/clio/callback', async (req, res) => {
   } catch (error: any) {
     console.error('Clio OAuth error:', error);
     res.status(500).send(`Authentication failed: ${error.message}`);
+  }
+});
+
+// Get all service connections for the current user
+app.get('/api/connections', async (req, res) => {
+  const userId = req.headers['x-user-id'] as string;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    const connections = await db.query(`
+      SELECT provider, username, created_at 
+      FROM service_connections 
+      WHERE user_id = ?
+    `, [userId]);
+    
+    res.json(connections);
+  } catch (error) {
+    console.error('Failed to fetch connections', error);
+    res.status(500).json({ error: 'Failed to fetch connections' });
+  }
+});
+
+// Delete a service connection
+app.delete('/api/connections/:provider', async (req, res) => {
+  const userId = req.headers['x-user-id'] as string;
+  const { provider } = req.params;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    await db.run(`
+      DELETE FROM service_connections 
+      WHERE user_id = ? AND provider = ?
+    `, [userId, provider]);
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete connection', error);
+    res.status(500).json({ error: 'Failed to delete connection' });
   }
 });
 
@@ -1489,7 +1582,42 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static('dist'));
+    const distPath = path.join(__dirname, 'dist');
+    console.log(`[Startup] Serving static files from: ${distPath}`);
+    
+    if (fs.existsSync(distPath)) {
+      console.log('[Startup] dist folder exists');
+      try {
+        const files = fs.readdirSync(distPath);
+        console.log('[Startup] Files in dist:', files);
+        if (fs.existsSync(path.join(distPath, 'icons'))) {
+          console.log('[Startup] Files in dist/icons:', fs.readdirSync(path.join(distPath, 'icons')));
+        } else {
+          console.log('[Startup] dist/icons folder does not exist');
+        }
+      } catch (e) {
+        console.error('[Startup] Error reading dist folder:', e);
+      }
+    } else {
+      console.error('[Startup] dist folder does not exist!');
+    }
+
+    app.use(express.static(distPath));
+
+    // SPA Fallback
+    app.get('*', (req, res) => {
+      if (!req.path.startsWith('/api')) {
+        const indexPath = path.join(distPath, 'index.html');
+        if (fs.existsSync(indexPath)) {
+          res.sendFile(indexPath);
+        } else {
+          res.status(404).send('index.html not found');
+        }
+      } else {
+        // Should be handled by the API catch-all, but just in case
+        res.status(404).json({ error: 'API route not found' });
+      }
+    });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
